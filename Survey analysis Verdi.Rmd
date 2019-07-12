@@ -1,0 +1,671 @@
+---
+title: "Ecotourism survey analysis"
+author: "Luis Antonio Arias Medellín"
+date: "5/20/2019"
+output: html_document
+---
+```{r,include=F}
+library("googlesheets")
+library("dplyr")
+library("ggplot2")
+library("tidyr")
+library("tibble")
+library("countrycode")
+library("stringr")
+library("GGally")
+library("gridExtra")
+
+#Read the functions for data analysis
+source("Funciones/Survey analysis Verdi.R")
+```
+
+```{r,include=F}
+#Look which google sheets I can read
+gs_ls()
+
+#Get the ecotourism google sheet
+survey<-gs_title("Ecotourism trip to Mexico (answers)")
+gs_ws_ls(survey)
+survey <- gs_read(ss=survey, ws = "Respuestas de formulario 1",colnames=T)
+
+#Store it as a data frame
+survey<-as.data.frame(survey[,-18])
+```
+
+
+```{r,include=F}
+#Format data base
+#Rename columns
+colnames(survey)<-c("Date","Country","Like.ecotourism","Gender","Age","Marital.status","Number.children","Profession","Months.travel","Days.travel","Accomodation","Eat","Spend.daily","Mexico.safe","Mexico.safe.options","Expect.visit","Buy.package")
+```
+ 
+##Methods
+The survey was made in google forms and available to people on May 23 2019. It was distributed by telling friends and relatives to fill and distribute the survey via Whatsapp and by posting it in their facebook wall. The survey was also posted in facebook groups where people post their surveys so that they can fill it and in turn they fill others surveys (i.e. Student survey exchange 2019, Survey sharing 2019 (English, active only), Dissertation survey exchange, Survey exchange: find participants & respondents, Thesis/Survey Questionnaire Filling group).  
+The sample is not random since people decided if they wanted to fill the survey, it was sent only by internet (where I would think most of the people who actively use internet are young) and it was asked to people that I know to fill it. However, it is a good first effort to know the feasibility of the offered package and travel characteristics of people that do ecotourism. 
+ 
+ 
+##Do you like to do ecotourism in other countries?
+Most of the people like to do ecotourism
+```{r,echo=F,fig.align='center'}
+#Know how many people have answered that they like ecotourism
+ data.frame(table(survey$Like.ecotourism)) %>% 
+  transmute(answer=Var1,
+            counts=as.numeric(Freq)) %>% 
+  mutate(prop=round(prop.table(counts),4)) %>% 
+  arrange(desc(prop)) %>%
+  mutate(lab.ypos = cumsum(prop) - 0.5*prop) %>% 
+  ggplot(aes(x = "", y = prop, fill = answer)) +
+  geom_bar(width = 1, stat = "identity", color = "grey") +
+  coord_polar("y", start = 0)+
+  geom_text(aes(y = lab.ypos, label = paste(counts," (",prop*100,"%",")",sep="")), color = "black",fontface="bold") +
+   theme_void() +
+  labs(fill="Answer")#+
+   #labs(title = "Do you like doing ecotourism?") #+
+ #legend
+```
+
+```{r,echo=F,include=F}
+#Are there specific countries that like or do not like ecotourism?
+ survey %>% 
+  group_by(Like.ecotourism,Country) %>% 
+  summarise(counts=n()) %>% 
+  ggplot(aes(x =Country, y = counts)) +
+  geom_bar(stat="identity") +
+  facet_wrap(~Like.ecotourism,ncol=1) +
+  ylab("Counts") +
+  theme(axis.text.x=element_text(angle=90))
+```
+
+```{r,include=F}
+#Add to the data base a column indicating its continent
+ survey<-survey %>%
+  filter(Country!="NA") %>% 
+  mutate(Country=if_else(Country=="United States of America (USA)","United States",Country),
+         Country=if_else(Country=="North Macedonia, Republic of","Macedonia,",Country)) %>% 
+  inner_join(countrycode::codelist[,c("continent","country.name.en")] %>% select(Country=country.name.en,Continent=continent),by="Country") %>% 
+  mutate(Continent=if_else(Country=="Mexico","Mexico",Continent),
+         Continent=if_else(Country=="United States" | Country=="Canada","North America",Continent))
+```
+
+```{r,echo=F,include=F}
+#Are there specific continents that like or do not like ecotourism?
+survey %>%   
+group_by(Like.ecotourism,Continent) %>% 
+  summarise(counts=n()) %>% 
+  ggplot(aes(x =Continent, y = counts)) +
+  geom_bar(stat="identity") +
+  facet_wrap(~Like.ecotourism,ncol=1) +
+  ylab("Counts") +
+  theme(axis.text.x=element_text(angle=90))
+```
+From now on, I will analyze the data considering only people that liked ecotourism
+```{r,include=F}
+survey2<-survey %>% 
+  filter(Like.ecotourism=="Yes")
+```
+
+##Which countries and continents are represnted in the survey?
+There were `r nrow(survey2)` people who answered the survey distributed in the following way:
+
+* __Countries:__ The country with the highest representation was Canada, followed by the United States and Australia. 
+
+* __Continents:__ All the continents are represented, although North America and Europe had the highest representation. NOTE: Mexico was considered as a separate factor in this analysis.
+```{r,echo=F,fig.align="center"}
+p1<-survey2 %>% 
+  group_by(Country) %>% 
+  summarise(counts=n()) %>% 
+  ggplot(aes(x=Country,y=counts)) +
+  geom_bar(stat="identity") +
+  ylab("Counts") +
+  theme(axis.text.x=element_text(angle=45,hjust=1))
+
+
+p2<-survey2 %>% 
+  group_by(Continent) %>% 
+  summarise(counts=n()) %>% 
+  ggplot(aes(x=Continent,y=counts)) +
+  geom_bar(stat="identity") +
+  ylab("Counts") +
+  theme(axis.text.x=element_text(angle=45,hjust=1))
+
+grid.arrange(p1, p2, ncol=2)
+
+rm(p1,p2)
+```
+
+
+##What is your gender?
+There were more female than male respondents
+```{r,echo=F,fig.align='center'}
+ data.frame(table(survey2$Gender)) %>% 
+  transmute(answer=Var1,
+            counts=as.numeric(Freq)) %>% 
+  mutate(prop=round(prop.table(counts),4)) %>% 
+  arrange(desc(prop)) %>%
+  mutate(lab.ypos = cumsum(prop) - prop/1.5,
+         lab.ypos=c(0.768,0.241,0.992)) %>% #Had to manually adjust values for putting the labels in the right position
+  ggplot(aes(x = "", y = prop, fill = answer)) +
+  geom_bar(width = 1, stat = "identity", color = "grey") +
+  coord_polar("y", start = 0)+
+  geom_text(aes(y = lab.ypos, label = paste(counts," (",prop*100,"%",")",sep="")), color = "black",fontface="bold") +
+   theme_void() +
+  labs(fill="Gender")
+```
+
+##What is your age?
+Most of the respondents were between 21-35 years old, followed by people between 36-50 years
+```{r,echo=F,fig.align='center'}
+survey2 %>% 
+  group_by(Age) %>% 
+  summarise(counts=n()) %>% 
+  ggplot(aes(x =Age, y = counts)) +
+  geom_bar(stat="identity") +
+  ylab("Counts") +
+  theme(axis.text.x=element_text(angle=45,hjust=1))+ 
+  scale_x_discrete(limits=c("Less than 20","21-35 years","36-50 years","More than 51 years"))
+```
+
+
+##What is your marital status?
+Most people were single
+```{r,echo=F,fig.align='center'}
+survey2 %>% 
+  group_by(Marital.status) %>% 
+  summarise(counts=n()) %>% 
+  ggplot(aes(x =Marital.status, y = counts)) +
+  geom_bar(stat="identity") +
+  xlab("Marital status") +
+  ylab("Counts") +
+  theme(axis.text.x=element_text(angle=90)) +
+  scale_x_discrete(limits=c("Single","Married","Divorced","Other"))
+```
+
+##How many children do you have?
+Most people did not have children
+```{r,echo=F,fig.align='center'}
+survey2 %>% 
+  group_by(Number.children) %>% 
+  summarise(counts=n()) %>% 
+  ggplot(aes(x =Number.children, y = counts)) +
+  geom_bar(stat="identity") +
+  xlab("Number of children") +
+  ylab("Counts") 
+```
+
+##What is your current profession?
+People were either workers or students
+```{r,echo=F,fig.align='center'}
+#Know how many people have answered that they like ecotourism
+survey2 %>% 
+  group_by(Profession) %>% 
+  summarise(counts=n()) %>% 
+  ggplot(aes(x =Profession, y = counts)) +
+  geom_bar(stat="identity") +
+  ylab("Counts")
+```
+
+
+##In which months of the year do you usually travel for ecotourism?
+Peopole could travel all the year round. However, there were two peak seasons: winter (December and January) and summer (May-August)
+```{r,echo=F,fig.align='center'}
+
+#List of months
+list.months<-c("January","February","March","April","May","June","July","August","September","October","November","December")
+
+#SUBSTRACT INFORMATION FROM COLUMNS THAT HAVE VALUES SEPARATED BY COMMAS. It will generate a dataframe called df
+#database=database that has the information.
+#column=column that has the information.
+#levels.column=list of the levels that the variable has.
+#name.output.dataframe=name of the output data frame
+separate.values(database=survey2,
+                column="Months.travel",
+                levels.column=list.months,
+                name.output.dataframe=wide.months.travel)
+
+#Make a data frame with column 1 as months and column 2 the sum of the months  
+long.months.travel<-data.frame(counts=colSums(wide.months.travel,na.rm=T)) %>% 
+  rownames_to_column(var="Month")
+
+#Plot
+long.months.travel %>% 
+  ggplot(aes(x=Month,y=counts)) +
+  geom_bar(stat="identity") +
+  theme(axis.text.x=element_text(angle=90)) + 
+  scale_x_discrete(limits=list.months)
+
+```
+
+
+```{r,echo=F,include=F,fig.align='center'}
+#Which months people can travel depending on the profession
+survey2 %>% 
+  bind_cols(wide.months.travel) %>% 
+  select(Profession,January,February,March,April,May,June,July,August,September,October,November,December) %>% 
+  gather(Month,counts,January,February,March,April,May,June,July,August,September,October,November,December) %>% #Convert from wide to long
+  group_by(Profession,Month) %>% #Aggregate
+  summarise(counts=sum(counts,na.rm=T)) %>% 
+  ggplot(aes(x=Month,y=counts)) +
+  geom_bar(stat="identity") +
+  theme(axis.text.x=element_text(angle=90)) + 
+  scale_x_discrete(limits=list.months) +
+  facet_wrap(~Profession)
+```
+
+##How many days do you usually spend for travelling?
+People are very flexible when travelling, but most of them could travel mainly 6-9 days, followed by 1-3 days and 10-14 days
+```{r,echo=F,fig.align='center'}
+
+#List of months
+list.days.travel<-c("1-3days(weekender)","6-9days(week)","10-14days(twoweeks)","Morethan15days")
+
+#SUBSTRACT INFORMATION FROM COLUMNS THAT HAVE VALUES SEPARATED BY COMMAS. It will generate a dataframe called df
+#database=database that has the information.
+#column=column that has the information.
+#levels.column=list of the levels that the variable has.
+#name.output.dataframe=name of the output data frame
+separate.values(database=survey2,
+                column="Days.travel",
+                levels.column=list.days.travel,
+                name.output.dataframe=df)
+
+
+#Make a data frame with column 1 as months and column 2 the sum of the months  
+long.days.travel<-data.frame(counts=colSums(df,na.rm=T)) %>% 
+  rownames_to_column(var="Days")
+
+#Plot
+long.days.travel %>% 
+  ggplot(aes(x=Days,y=counts)) +
+  geom_bar(stat="identity") +
+  theme(axis.text.x=element_text(angle=90)) + 
+  scale_x_discrete(limits=list.days.travel)
+
+```
+
+```{r,echo=F,include=F,fig.align='center'}
+#How many days do you usually spend for travelling according to their profession
+survey2 %>% 
+  bind_cols(df) %>% 
+  select(Profession,"1-3days(weekender)","6-9days(week)","10-14days(twoweeks)","Morethan15days") %>% 
+  gather(Days,counts,"1-3days(weekender)","6-9days(week)","10-14days(twoweeks)","Morethan15days") %>% #Convert from wide to long
+  group_by(Profession,Days) %>% #Aggregate
+  summarise(counts=sum(counts,na.rm=T)) %>% 
+  ggplot(aes(x=Days,y=counts)) +
+  geom_bar(stat="identity") +
+  theme(axis.text.x=element_text(angle=90)) + 
+  scale_x_discrete(limits=list.days.travel) +
+  facet_wrap(~Profession)
+
+rm(list.days.travel)
+```
+
+##In what kind of accommodation do you usually stay when you travel for ecotourism?
+People usually stay in Airbnb, 3-5 stars hotels and hostels
+```{r,echo=F,fig.align='center'}
+#List of months
+list.accomodation<-c("1-2starshotel","3-5starshotel","Hostels","Airbnb","Friend/Familyhouse","Campsite","Other")
+
+#SUBSTRACT INFORMATION FROM COLUMNS THAT HAVE VALUES SEPARATED BY COMMAS. It will generate a dataframe called df
+#database=database that has the information.
+#column=column that has the information.
+#levels.column=list of the levels that the variable has.
+#name.output.dataframe=name of the output data frame
+separate.values(database=survey2,
+                column="Accomodation",
+                levels.column=list.accomodation,
+                name.output.dataframe=df)
+
+
+#Make a data frame with column 1 as months and column 2 the sum of the months  
+long.accomodation<-data.frame(counts=colSums(df,na.rm=T)) %>% 
+  rownames_to_column(var="Accomodation")
+
+#Plot
+long.accomodation %>% 
+  ggplot(aes(x=Accomodation,y=counts)) +
+  geom_bar(stat="identity") +
+  theme(axis.text.x=element_text(angle=90)) + 
+  scale_x_discrete(limits=list.accomodation)
+```
+
+
+```{r,echo=F,include=F,fig.align='center'}
+#Which accomodation people select depending on the profession
+survey2 %>% 
+  bind_cols(df) %>% 
+  select(Profession,"1-2starshotel","3-5starshotel","Hostels","Airbnb","Friend/Familyhouse","Campsite","Other") %>% 
+  gather(Accomodation,counts,"1-2starshotel","3-5starshotel","Hostels","Airbnb","Friend/Familyhouse","Campsite","Other") %>% #Convert from wide to long
+  group_by(Profession,Accomodation) %>% #Aggregate
+  summarise(counts=sum(counts,na.rm=T)) %>% 
+  ggplot(aes(x=Accomodation,y=counts)) +
+  geom_bar(stat="identity") +
+  theme(axis.text.x=element_text(angle=90)) + 
+  scale_x_discrete(limits=list.accomodation) +
+  facet_wrap(~Profession)
+
+rm(list.accomodation)
+```
+
+##Where do you like to eat?
+People are very flexible in their choice of restaurants
+```{r,echo=F,fig.align='center'}
+#List of months
+list.eat<-c("Localmarket","Streetfood","Restaurant","Other")
+
+#SUBSTRACT INFORMATION FROM COLUMNS THAT HAVE VALUES SEPARATED BY COMMAS. It will generate a dataframe called df
+#database=database that has the information.
+#column=column that has the information.
+#levels.column=list of the levels that the variable has.
+#name.output.dataframe=name of the output data frame
+separate.values(database=survey2,
+                column="Eat",
+                levels.column=list.eat,
+                name.output.dataframe=df)
+
+
+#Make a data frame with column 1 as months and column 2 the sum of the months  
+long.eat<-data.frame(counts=colSums(df,na.rm=T)) %>% 
+  rownames_to_column(var="Eat")
+
+#Plot
+long.eat %>% 
+  ggplot(aes(x=Eat,y=counts)) +
+  geom_bar(stat="identity") +
+  theme(axis.text.x=element_text(angle=90)) + 
+  scale_x_discrete(limits=list.eat)
+```
+
+##How much do you usually spend daily when you travel for ecotourism?
+Most people spend less than $100 USD per day when they travel
+```{r,echo=F,fig.align='center'}
+list.spend.daily<-c("Less than $49 USD","$50 - $100 USD","$100 - $199 USD","$200 - $299 USD","$300 - $399 USD","More than $400 USD")
+
+survey2 %>% 
+  group_by(Spend.daily) %>% 
+  summarise(counts=n()) %>% 
+  ggplot(aes(x =Spend.daily, y = counts)) +
+  geom_bar(stat="identity") +
+  ylab("Counts") +
+  theme(axis.text.x=element_text(angle=90))+ 
+  scale_x_discrete(limits=list.spend.daily)
+```
+
+
+```{r,echo=F,include=F,fig.align='center'}
+#How much people spend daily according to their profession
+survey2 %>% 
+  group_by(Profession,Spend.daily) %>% 
+  summarise(counts=n()) %>% 
+  ggplot(aes(x =Spend.daily, y = counts)) +
+  geom_bar(stat="identity") +
+  ylab("Counts") +
+  theme(axis.text.x=element_text(angle=90))+ 
+  scale_x_discrete(limits=list.spend.daily) +
+  facet_wrap(~Profession)
+```
+
+
+#Overall, how do you perceive Mexico for traveling?
+People perceive Mexico as a more less safe country
+```{r,echo=F,fig.align='center'}
+
+survey2 %>% 
+  group_by(Mexico.safe) %>% 
+  summarise(counts=n()) %>% 
+  ggplot(aes(x =Mexico.safe, y = counts)) +
+  geom_bar(stat="identity") +
+  ylab("Counts") +
+  xlab("1 (very unsafe) - 4 (very safe)")
+```
+
+
+
+```{r,echo=F,include=F,fig.align='center'}
+#How dangerous do you think it is Mexico according to their gender?
+survey2 %>% 
+  group_by(Gender,Mexico.safe) %>% 
+  summarise(counts=n()) %>% 
+  ggplot(aes(x =Mexico.safe, y = counts)) +
+  geom_bar(stat="identity") +
+  ylab("Counts") +
+  xlab("1 (very unsafe) - 4 (very safe)") +
+  facet_wrap(~Gender)
+```
+
+
+##Do you think that traveling to Mexico would involve finding the following situations? 
+People are mostly worried about crime and corruption and, with a less extent, to food sanitary conditions and language communications 
+```{r,echo=F,fig.align='center'}
+#List of months
+list.mexico.safe.options<-c("Aggressivepanhandlers/beggars","Actsofterrorism","Dishonestmerchants","Unsanitarywater/foodpreparation","Languagecommunicationdifficulties","Poormedicalfacilities","Pettycrime(theft)","Physicalviolence","Policecorruption","Other")
+
+#SUBSTRACT INFORMATION FROM COLUMNS THAT HAVE VALUES SEPARATED BY COMMAS. It will generate a dataframe called df
+#database=database that has the information.
+#column=column that has the information.
+#levels.column=list of the levels that the variable has.
+#name.output.dataframe=name of the output data frame
+separate.values(database=survey2,
+                column="Mexico.safe.options",
+                levels.column=list.mexico.safe.options,
+                name.output.dataframe=df)
+
+
+#Make a data frame with column 1 as months and column 2 the sum of the months  
+long.mexico.safe.options<-data.frame(counts=colSums(df,na.rm=T)) %>% 
+  rownames_to_column(var="Mexico.safe.options")
+
+#Plot
+long.mexico.safe.options %>% 
+  ggplot(aes(x=Mexico.safe.options,y=counts)) +
+  geom_bar(stat="identity") +
+  theme(axis.text.x=element_text(angle=90)) + 
+  scale_x_discrete(limits=list.mexico.safe.options)
+
+#DO THIS SAME ANALYSIS ACCORDING TO THE COUNTRY
+```
+
+
+
+##What do you expect to visit and know in an ecotouristic trip to Mexico?
+People would like to know the local culture and natural parks in Mexico
+```{r,echo=F,fig.align='center'}
+#List of months
+list.expect.visit<-c("Localfood","Localculture","Localmarkets","Contactwithlocalpeople","Historicalmonuments(churchespyramids)","Activitiesinnaturalparks","Museums","Bars","Entertainmentevents","Danceclubs","Nightclubs","Other")
+
+
+#SUBSTRACT INFORMATION FROM COLUMNS THAT HAVE VALUES SEPARATED BY COMMAS. It will generate a dataframe called df
+#database=database that has the information.
+#column=column that has the information.
+#levels.column=list of the levels that the variable has.
+#name.output.dataframe=name of the output data frame
+separate.values(database=survey2 %>% mutate(Expect.visit=str_replace(Expect.visit, "churches, pyramids", "churchespyramids")), #Added this line since originally the variable include the name=churches, pyramids and it was separating pyramids as another variable, so I replaced the name with churchespyramids  
+                column="Expect.visit",
+                levels.column=list.expect.visit,
+                name.output.dataframe=df)
+
+
+#Make a data frame with column 1 as months and column 2 the sum of the months  
+long.expect.visit<-data.frame(counts=colSums(df,na.rm=T)) %>% 
+  rownames_to_column(var="Expect.visit")
+
+#Plot
+long.expect.visit %>% 
+  ggplot(aes(x=Expect.visit,y=counts)) +
+  geom_bar(stat="identity") +
+  theme(axis.text.x=element_text(angle=90)) + 
+  scale_x_discrete(limits=list.expect.visit)
+```
+
+##Would you pay $800 USD for a 6-day tourist package that would include eating authentic local food, visiting historical monuments, pyramids, museums, hiking in nature, accommodation, private transportation and a bilingual local guide?
+Most of the people would buy the package that was offered to them
+```{r,echo=F,fig.align='center'}
+#Know how many people have answered that they woudl buy the package
+ data.frame(table(survey2$Buy.package)) %>% 
+  transmute(answer=Var1,
+            counts=as.numeric(Freq)) %>% 
+  mutate(prop=round(prop.table(counts),4)) %>% 
+  arrange(desc(prop)) %>%
+  mutate(lab.ypos = cumsum(prop) - 0.5*prop) %>% 
+  ggplot(aes(x = "", y = prop, fill = answer)) +
+  geom_bar(width = 1, stat = "identity", color = "grey") +
+  coord_polar("y", start = 0)+
+  geom_text(aes(y = lab.ypos, label = paste(counts," (",prop*100,"%",")",sep="")), color = "black",fontface="bold") +
+   theme_void() +
+  labs(fill="Answer")#+
+   #labs(title = "Do you like doing ecotourism?") #+
+ #legend
+```
+
+```{r,echo=F,include=F,fig.align='center'}
+#Are there specific countries that would buy the package more than others?
+ survey2 %>% 
+  group_by(Buy.package,Country) %>% 
+  summarise(counts=n()) %>% 
+  ggplot(aes(x =Country, y = counts)) +
+  geom_bar(stat="identity") +
+  facet_wrap(~Buy.package,ncol=1) +
+  ylab("Counts") +
+  theme(axis.text.x=element_text(angle=90))
+```
+
+```{r,echo=F,include=F}
+#Are there specific continents that would buy the package more than others?
+ survey2 %>% 
+  group_by(Buy.package,Continent) %>% 
+  summarise(counts=n()) %>% 
+  ggplot(aes(x =Continent, y = counts)) +
+  geom_bar(stat="identity") +
+  facet_wrap(~Buy.package,ncol=1) +
+  ylab("Counts") +
+  theme(axis.text.x=element_text(angle=90))
+```
+##Compare people within groups with certain characteristics that would buy the package
+```{r,echo=F,fig.align='center'}
+p1<-survey2 %>% 
+  filter(Buy.package!="NA") %>% 
+  #Transform to factor some variables
+  group_by(Buy.package,Gender) %>% 
+  summarise(counts=n()) %>% 
+  ggplot() + 
+  geom_bar(aes(x = Gender, y = counts, fill = Buy.package),stat="identity")
+
+
+p2<-survey2 %>% 
+  filter(Buy.package!="NA") %>% 
+  #Transform to factor some variables
+  group_by(Buy.package,Age) %>% 
+  summarise(counts=n()) %>% 
+  ggplot() + 
+  geom_bar(aes(x = Age, y = counts, fill = Buy.package),stat="identity")
+
+p3<-survey2 %>% 
+  filter(Buy.package!="NA") %>% 
+  #Transform to factor some variables
+  group_by(Buy.package,Profession) %>% 
+  summarise(counts=n()) %>% 
+  ggplot() + 
+  geom_bar(aes(x = Profession, y = counts, fill = Buy.package),stat="identity") 
+
+grid.arrange(p1,p2,p3)
+
+```
+
+##Conclusion
+The results showed that most of the poeple that answered the survey like ecotourism and will be willing to buy the offered package. 
+People from all the continents filled the survey, although there is a high representation of people from Europe and North America (excluding Mexico). People who answered the survey were single students and workers who were between 21 and 50 years old and had no children. Although people could travel during all year, people usually travel during December-January and May-August. It seems that people are very flexible for accomodation and food choices.People would like to know the local culture and do activities in natural parks.
+
+The package we are offering to people seems to fulfill their expectatives , since we are offering them a good accomodation (2,3 and 5 stars hotels), hiking in natural parks and getting to know the local culture for a price that they would be willing to pay. 
+
+
+
+
+
+
+```{r,include=F,fig.align='center'}
+
+survey2 %>% 
+  filter(Buy.package!="NA") %>% 
+  #Transform to factor some variables
+  mutate(Country=as.factor(Country),
+         Like.ecotourism=as.factor(Like.ecotourism),
+         Gender=as.factor(Gender),
+         Age=as.factor(Age),
+         Marital.status=as.factor(Marital.status),
+         Number.children=as.numeric(as.character(Number.children)),
+         Prefession=as.factor(Profession),
+         Months.travel=as.factor(Months.travel),
+         Days.travel=as.factor(Days.travel),
+         Accomodation=as.factor(Accomodation),
+         Eat=as.factor(Eat),
+         Spend.daily=as.factor(Spend.daily),
+         Mexico.safe=as.factor(Mexico.safe),
+         Mexico.safe.option=as.factor(Mexico.safe.options),
+         Expect.visit=as.factor(Expect.visit),
+         Buy.package=as.factor(Buy.package)) %>% 
+   #select(Buy.package,Gender,Age,Marital.status,Profession,Mexico.safe,Spend.daily) %>% 
+  select(Buy.package,Gender,Age,Profession) %>%
+  ggpairs() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))
+#ggplot(aes(x=Mexico.safe,..count..)) + 
+#  geom_bar() +
+#  facet_wrap(~Buy.package) +
+#  theme(axis.text.x = element_text(angle=90))
+```
+
+
+
+```{r,echo=F,include=F,fig.align='center'}
+#Logistic regression
+#Prepare data base
+data.logistic.regression<-survey2 %>% 
+  filter(Gender!="Prefer not to say") %>% 
+  filter(Age=="21-35 years" | Age=="36-50 years") %>% 
+  filter(Profession=="Student" | Profession=="Worker") %>% 
+  #filter(Spend.daily=="$Less than $49 USD" | Spend.daily=="$50 - $100 USD") %>% 
+    #Transform to factor some variables
+    mutate(Country=as.factor(Country),
+           Like.ecotourism=as.factor(Like.ecotourism),
+           Gender=as.factor(Gender),
+           Age=as.factor(Age),
+           Marital.status=as.factor(Marital.status),
+           Number.children=as.numeric(as.character(Number.children)),
+           Profession=as.factor(Profession),
+           Months.travel=as.factor(Months.travel),
+           Days.travel=as.factor(Days.travel),
+           Accomodation=as.factor(Accomodation),
+           Eat=as.factor(Eat),
+           Spend.daily=as.factor(Spend.daily),
+           Mexico.safe=as.factor(Mexico.safe),
+           Mexico.safe.option=as.factor(Mexico.safe.options),
+           Expect.visit=as.factor(Expect.visit),
+           Buy.package=as.factor(Buy.package)) %>% 
+    select(Buy.package,Gender,Age,Marital.status,Profession,Mexico.safe,Spend.daily)
+
+#Plot pairs
+data.logistic.regression %>% 
+  select(Buy.package,Gender,Profession) %>% 
+  ggpairs()
+
+#Summary of the data base
+summary(data.logistic.regression)
+
+#Obtain proportion of people that would buy or not the package by Gender and profession
+data.logistic.regression %>% 
+  #filter(Gender=="Female" & Buy.package!="NA") %>%
+  filter(Profession=="Worker" & Buy.package!="NA") %>%
+  #group_by(Buy.package,Gender) %>%
+  group_by(Buy.package,Profession) %>%
+  summarise(prop=n()/nrow(.))
+
+#Male yes = 0.769, no = 0.231
+#Female yes= 0.75, no = 0.25
+#Student yes 0.767, no=0.233
+#Worker yes 0.75, no=0.25
+
+#Run loggistic regression
+summary(mod.1<-data.logistic.regression %>% 
+  glm(Buy.package~Gender+Profession, data=., family="binomial"))
+
+
+#I do not know how to check assumption in logistic regression with factor variables
+```
