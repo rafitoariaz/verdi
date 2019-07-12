@@ -1,0 +1,495 @@
+---
+title: "Estadisticas de Abril"
+author: "Luis Antonio Arias Medellin"
+date: "6 de Mayo de 2018"
+output: html_document
+---
+
+```{r, include=F}
+rm(list = ls())
+library("rmarkdown")
+library("dplyr")
+
+#Especificar el mes que quiero analizar
+mes_analizar<-"Jul"
+
+#Importar funciones
+source("Funciones/Limpieza bases.R")
+
+#Ejectuar función para limpiar la base de datos
+limpiar.base.ventas()
+
+#Extraer el ano y el mes de cada venta
+ventas$ano<-strftime(ventas$Fecha_compra, "%Y")
+ventas$mes<-strftime(ventas$Fecha_compra, "%b")
+
+#Obtener valores unicos de cada cliente por fecha para contar compras por mes y ano
+compras_mes<-unique(subset(ventas,select=c("Nombre","Apellido","Fecha_compra")))
+
+#Ventas por mes. Extraer el mes de cada venta
+compras_mes$mes<-strftime(compras_mes$Fecha, "%B")
+compras_mes$ano<-strftime(compras_mes$Fecha, "%Y")
+
+#Agregar una columna con 1's para contar las compras de los clientes por mes y ano
+compras_mes$com<-1
+
+#Agregar el numero de clientes que me compran por mes y por ano
+com_mes_ano<-aggregate(compras_mes$com,
+                    by=list(mes=compras_mes$mes,
+                            ano=compras_mes$ano),FUN=sum)
+
+#Renombrar columnas
+colnames(com_mes_ano)[3]<-"compras"
+
+#Ordenar por mes. Primero asignar un numero a cada mes. Le pongo la funcion subtr para los meses porque esta funcion solo sirve si los meses estan abreviados, no completos
+com_mes_ano$mes_num<-match(substr(com_mes_ano$mes,1,3),month.abb)
+
+#Ordenar
+com_mes_ano<-com_mes_ano[order(com_mes_ano$ano,com_mes_ano$mes_num),]
+
+#Para hacer la grafica de ventas por mes de cada ano, tengo que tener un valor por mes de cada ano. 
+#Sin embargo, hay meses en cada ano donde no vendi nada, entonces tengo que crear un dato para esos meses
+#Hacer una base de los meses
+base_mes_ano<-data.frame(mes=unique(substr(com_mes_ano$mes,1,3)))
+base_mes_ano$mes_num<-match(base_mes_ano$mes,month.abb)
+base_mes_ano<-base_mes_ano[order(base_mes_ano$mes_num),]
+
+#Hacer una base de los ano
+base_ano<-data.frame(ano=unique(com_mes_ano$ano))
+
+#Hacer una base con los meses y anos que tenga en mi base
+base_mes_ano$ano<-""
+base_mes_ano2<-base_mes_ano
+base_mes_ano$ano<-base_ano[1,]
+
+for(i in 2:nrow(base_ano)) {
+  base_mes_ano2$ano<-base_ano[i,]
+  base_mes_ano<-rbind(base_mes_ano,base_mes_ano2)
+}
+
+#Poner meses abreviados para que se puede hacer merge con base_mes_ano
+com_mes_ano$mes<-substr(com_mes_ano$mes,1,3)
+
+#Juntar con base original de mis ventas
+com_mes_ano<-merge(com_mes_ano[,1:3],base_mes_ano,by=c("ano","mes"),all=T)
+
+#Ordenar base
+com_mes_ano<-com_mes_ano[order(com_mes_ano$ano,com_mes_ano$mes_num),]
+
+#Necesito ponerle 0's a los NA de las fechas anteriores a la fecha de hoy
+#Primero genero una base con la fecha de hoy
+fecha_actual<-data.frame(ano=strftime(Sys.Date(),"%Y"),mes=strftime(Sys.Date(),"%B"))
+
+#Si la fecha de hoy concuerda con la base, al sumar el ano y el mes daria un dos y al sumar
+#consecutivamente las celdas daria mas de dos. Esto lo usaria entonces para seleccionar
+#fechas anteriores a la de hoy
+#Validar mes y ano con fecha actual
+com_mes_ano$ano_val<-ifelse(fecha_actual$ano==com_mes_ano$ano,1,0)
+com_mes_ano$mes_val<-ifelse(substr(fecha_actual$mes,1,3)==com_mes_ano$mes,1,0)
+#sumar  filas
+com_mes_ano$suma<-rowSums(com_mes_ano[,5:6])
+#Sumar las celdas consecutivamente
+library("zoo")
+com_mes_ano$roll <- rollsumr(com_mes_ano$suma, k = 2, fill = NA)
+#Crear regla para que ponga 0's antes de la fecha de hoy y NA despues de la fecha de hoy
+#si no hubo ventas
+com_mes_ano$compras<-ifelse(com_mes_ano$roll<2 & com_mes_ano$suma<2 & 
+         is.na(com_mes_ano$compras)=="TRUE",0,com_mes_ano$compras)
+
+#Sacar el ano 2011 de las bases porque solo tengo informacion de Diciembre para ese ano
+com_mes_ano<-subset(com_mes_ano,com_mes_ano$ano!="2011")
+base_ano<-subset(base_ano,base_ano$ano!="2011")
+```
+
+```{r,echo=F,fig.height = 8, fig.width = 14,fig.align="center"}
+# Número de ventas por mes
+######HACER UN GRAFICO DE LINEA DE TODOS LOS MESES DE TODOS LOS ANOS EN LA MISMA VENTANA
+par(mfrow=c(1,1),cex=1.8)
+plot(com_mes_ano$compras,type="l",main=paste("Número de ventas por mes 2012-",
+                                             max(unique(com_mes_ano$ano),sep="")),
+         xlab="Mes",ylab="Número de ventas",xaxt="n")
+    axis(1,labels=com_mes_ano$mes,at=1:nrow(data.frame(com_mes_ano$mes)),las=2,cex.axis=0.55)
+```
+
+
+
+```{r,echo=F}
+# Número de ventas por año
+#Agregar número de ventas por año
+com_ano<-aggregate(com_mes_ano$compras,by=list(ano=com_mes_ano$ano),FUN=sum,na.rm=T)
+
+#Renombrar columnas
+colnames(com_ano)[2]<-"compras"
+
+#Calcular el porcentaje de más que se ha vendido con respecto al año más productivo
+#Ordenar la base del mayo número de compras al menor
+porcentaje_mas_compras<-com_ano$compras[order(-com_ano$compras)]
+
+#Calcular el procentaje
+porcentaje_mas_compras<-round(((porcentaje_mas_compras[1]/porcentaje_mas_compras[2])-1)*100,2)
+```
+
+```{r,echo=F,fig.height = 7, fig.width = 9,fig.align="center"}
+#Hacer gráfico de ventas por año
+par(mfrow=c(1,1),cex=1.3)
+b<-barplot(com_ano$compras,main=paste("Número de ventas por año"),
+           ylab="Número de ventas",xlab="Año")
+axis(1,at=b,labels=unique(com_ano$ano))
+abline(h=mean(subset(com_ano,com_ano$ano<as.numeric(as.character(fecha_actual$ano)))$compras,na.rm=T),col="red") #La línea roja representa el promedio de todos los años anteriores al actual
+
+#Dividir las compras del ano pasado entre 12 y luego multiplicar por el mes en el que me encuentro ahora
+b<-com_ano %>% 
+  filter(ano==as.numeric(as.character((fecha_actual$ano)))-1) %>% 
+  mutate(compra_actual=(compras/12)*as.numeric(format(Sys.Date(),"%m"))) %>% 
+  select(compra_actual)
+
+#Dibujar linea en grafica
+abline(h=b,col="blue")
+
+```
+
+```{r,echo=F,fig.height = 7, fig.width = 9,fig.align="center"}
+
+com_mes_ano_lista_por_ano<-split(com_mes_ano,f=com_mes_ano$ano)
+
+for (i in 1:length(com_mes_ano_lista_por_ano)){
+  
+  com_mes_ano_lista_por_ano[[i]]$cumulativo<-cumsum(com_mes_ano_lista_por_ano[[i]]$compras)
+  
+}
+
+com_mes_ano_lista_por_ano<-do.call("rbind",com_mes_ano_lista_por_ano)
+
+library(ggplot2)
+    #GGPLOT
+    qplot(x=mes_num, y=cumulativo, 
+           data=com_mes_ano_lista_por_ano, 
+           colour=ano, 
+           main="Acumulado de compras por mes y año") +
+      geom_line() + scale_x_discrete(name="Mes", limits=unique(com_mes_ano_lista_por_ano$mes)) + ylab("Acumulado de compras") + theme(plot.title = element_text(hjust = 0.5))
+    
+    #qplot(x=mes_num, y=cumulativo, 
+     #      data=subset(com_mes_ano_lista_por_ano,com_mes_ano_lista_por_ano$ano>=2017), 
+      #     colour=ano, 
+       #    main="Acumulado de ventas por mes y año") +
+      #geom_line() + scale_x_discrete(name="Mes", limits=unique(com_mes_ano_lista_por_ano$mes)) + ylab("Acumulado de compras") + theme(plot.title = element_text(hjust = 0.5))
+
+```
+
+
+
+```{r,echo=F,fig.height = 5, fig.width = 7,fig.align="center"}
+# Número de ventas en el mes analizado
+par(mfrow=c(1,1),xpd=F,mar=c(5,5,2,2),cex=1.3)
+#Especificar el mes que quiero analizar
+#mes_analizar<-"Mar"
+#Barplot
+b<-barplot(subset(com_mes_ano,com_mes_ano$mes==mes_analizar)$compras,
+           main=paste("Número de ventas en",mes_analizar),ylab="Número de ventas",
+           ylim=c(0,max(subset(com_mes_ano,com_mes_ano$mes==mes_analizar)$compras,na.rm=T)),
+           xlab="Año")
+axis(1,at=b,labels=unique(com_mes_ano$ano))
+abline(h=mean(subset(com_mes_ano,com_mes_ano$mes==mes_analizar &
+                       com_mes_ano$ano<as.numeric(as.character(fecha_actual$ano)))$compras,na.rm=T),
+           col="red") #La línea roja representa el promedio de todos los años anteriores al actual
+
+```
+
+```{r,include=F}
+#Agregar por mes y ano
+agg_mes_ano<-aggregate(ventas$Total,by=list(mes=ventas$mes,ano=ventas$ano),FUN=sum,na.rm=T)
+#O agregar pero quitando una super venta que tuve
+agg_mes_ano<-aggregate(ventas[ventas$Cantidad<80,]$Total,
+                       by=list(mes=ventas[ventas$Cantidad<80,]$mes,
+                               ano=ventas[ventas$Cantidad<80,]$ano),
+                       FUN=sum,na.rm=T)
+
+#Renombrar columnas
+colnames(agg_mes_ano)[3]<-"total"
+
+
+#Hacer copia de las ventas por mes
+tsobject_ano_mes<-agg_mes_ano
+
+#Poner un 0 en los meses donde no hubo ventas
+tsobject_ano_mes$total[is.na(tsobject_ano_mes$total)] <- 0
+
+#Seleccionar solo las filas hasta la fecha actual de la base. 
+#Voy a agregar una columna que va a  #indicar la fila que concuerde con la fecha actual
+tsobject_ano_mes$fecha<-0
+
+#Poner un uno si la fecha actual concuerda con la fecha de la base de datos
+tsobject_ano_mes$fecha<-ifelse(paste(tsobject_ano_mes$ano,tsobject_ano_mes$mes,sep="-")==format(Sys.Date(),"%Y-%b"),1,0)
+#tsobject_ano_mes$fecha<-ifelse(paste(tsobject_ano_mes$ano,tsobject_ano_mes$mes,sep="-")=="2018-Mar",1,0)
+
+#Pegar una columna a la base indicando el numero de fila
+tsobject_ano_mes<-cbind(tsobject_ano_mes,data.frame(numrow=row(tsobject_ano_mes)[,1]))
+
+#Seleccionar filas anteriores a la fecha actual
+#tsobject_ano_mes<-tsobject_ano_mes[12:subset(tsobject_ano_mes,tsobject_ano_mes$fecha==1)$numrow,1:4]
+
+
+#Hacer copia del objeto para hacer grafico de linea de las ventas
+tsobject_ano_mes2<-tsobject_ano_mes
+
+```
+
+
+```{r, echo=FALSE,fig.height = 8, fig.width = 14,fig.align="center"}
+# Ingresos mensuales por año
+#Crear data frame de mes y numero de mes para hacer merge con mi base de gastos y poder ordenar por mes
+#Saber el numero de veces que se va a repetir los anos
+numero_anos<-nrow(data.frame(seq(from=2013,to=format(Sys.Date(), "%Y"))))
+
+#Hacer base
+mes_num<-data.frame(mes=rep(c("Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"),times=numero_anos),mes_num=rep(seq(from=1,to=12),times=numero_anos),ano=rep(seq(from=2013,to=format(Sys.Date(), "%Y")),each=12))
+
+#Unir base de los meses y anos con la base de ingresos
+tsobject_ano_mes2<-merge(tsobject_ano_mes2[,1:3],mes_num,by=c("ano","mes"),all=T)
+
+#Ordenar por ano y mes
+tsobject_ano_mes2<-tsobject_ano_mes2[order(tsobject_ano_mes2$ano,tsobject_ano_mes2$mes_num),]
+
+#Necesito ponerle 0's a los NA de las fechas anteriores a la fecha de hoy
+#Primero genero una base con la fecha de hoy
+fecha_actual<-data.frame(ano=strftime(Sys.Date(),"%Y"),mes=strftime(Sys.Date(),"%B"))
+
+#Si la fecha de hoy concuerda con la base, al sumar el ano y el mes daria un dos y al sumar
+#consecutivamente las celdas daria mas de dos. Esto lo usaria entonces para seleccionar
+#fechas anteriores a la de hoy
+#Validar mes y ano con fecha actual
+tsobject_ano_mes2$ano_val<-ifelse(fecha_actual$ano==tsobject_ano_mes2$ano,1,0)
+tsobject_ano_mes2$mes_val<-ifelse(substr(fecha_actual$mes,1,3)==tsobject_ano_mes2$mes,1,0)
+#sumar  filas
+tsobject_ano_mes2$suma<-rowSums(tsobject_ano_mes2[,5:6])
+#Sumar las celdas consecutivamente
+library("zoo")
+tsobject_ano_mes2$roll <- rollsumr(tsobject_ano_mes2$suma, k = 2, fill = NA)
+#Crear regla para que ponga 0's antes de la fecha de hoy y NA despues de la fecha de hoy
+#si no hubo ventas
+tsobject_ano_mes2$total<-ifelse(tsobject_ano_mes2$roll<2 & tsobject_ano_mes2$suma<2 & 
+                              is.na(tsobject_ano_mes2$total)=="TRUE",0,tsobject_ano_mes2$total)
+
+#Hacer grafico de linea
+par(mfrow=c(1,1),mar=c(5,5,2,2),cex=1.9)
+plot(tsobject_ano_mes2$total,type="l",main=paste("Ingresos mensuales entre 2013-",
+                                                 max(unique(tsobject_ano_mes2$ano),sep="")),xlab="Mes",ylab="Ventas ($)",xaxt="n")
+
+axis(1,labels=tsobject_ano_mes2$mes,at=1:nrow(data.frame(tsobject_ano_mes2$mes)),
+     las=2,cex.axis=0.55)
+
+```
+
+
+```{r, include=F}
+# Ingresos anuales
+#Agregar por ano
+agg_ano<-aggregate(ventas$Total,by=list(ano=ventas$ano),FUN=sum,na.rm=T)
+
+#Renombrar columnas
+colnames(agg_ano)[2]<-"total"
+
+#base con la fecha de hoy
+fecha_actual<-data.frame(ano=strftime(Sys.Date(),"%Y"),mes=strftime(Sys.Date(),"%B"))
+```
+
+```{r, echo=FALSE,fig.height = 7, fig.width = 9,fig.align="center"}
+#######GRAFICAR GANANCIAS ANUALES POR ANO
+par(mfrow=c(1,1),cex=1.3)
+barplot(subset(agg_ano,agg_ano$ano>2011)$total,
+        names.arg=subset(agg_ano,agg_ano$ano>2011)$ano,ylab="Ingresos ($)",xlab="Año",
+        main="Ingresos por año")
+#Poner linea promedio de todos los anos sin considerar el actual
+abline(h=mean(subset(agg_ano,agg_ano$ano>2011 &
+                       agg_ano$ano<as.numeric(as.character(fecha_actual$ano)))$total,
+              na.rm=T),col="red")
+abline(h=0)
+
+#Dividir las compras del ano pasado entre 12 y luego multiplicar por el mes en el que me encuentro ahora
+b<-agg_ano %>% 
+  filter(ano==as.numeric(as.character((fecha_actual$ano)))-1) %>% 
+  mutate(compra_actual=(total/12)*as.numeric(format(Sys.Date(),"%m"))) %>% 
+  select(compra_actual)
+
+#Dibujar linea en grafica
+abline(h=b,col="blue")
+```
+
+```{r,include=F}
+
+#Agregar por mes y ano
+agg_mes_ano<-aggregate(ventas$Total,by=list(mes=ventas$mes,ano=ventas$ano),FUN=sum,na.rm=T)
+#O agregar pero quitando una super venta que tuve
+agg_mes_ano<-aggregate(ventas[ventas$Cantidad<80,]$Total,
+                       by=list(mes=ventas[ventas$Cantidad<80,]$mes,
+                               ano=ventas[ventas$Cantidad<80,]$ano),
+                       FUN=sum,na.rm=T)
+
+#Renombrar columnas
+colnames(agg_mes_ano)[3]<-"total"
+
+#Resumen
+summary(agg_mes_ano$total)
+
+#Ordenar por mes. Primero asignar un numero a cada mes
+agg_mes_ano$mes_num<-match(agg_mes_ano$mes,month.abb)
+
+#Ordenar
+agg_mes_ano<-agg_mes_ano[order(agg_mes_ano$ano,agg_mes_ano$mes_num),]
+
+#Para hacer la grafica de ventas por mes de cada ano, tengo que tener un valor por mes de cada ano. 
+#Sin embargo, hay meses en cada ano donde no vendi nada, entonces tengo que crear un dato para esos meses
+#Hacer una base de los meses
+base_mes_ano<-data.frame(mes=unique(agg_mes_ano$mes))
+base_mes_ano$mes_num<-match(base_mes_ano$mes,month.abb)
+base_mes_ano<-base_mes_ano[order(base_mes_ano$mes_num),]
+
+#Hacer una base de los ano
+base_ano<-data.frame(ano=unique(agg_mes_ano$ano))
+
+#Hacer una base con los meses y anos que tenga en mi base
+base_mes_ano$ano<-""
+base_mes_ano2<-base_mes_ano
+base_mes_ano$ano<-base_ano[1,]
+
+for(i in 2:nrow(base_ano)) {
+  base_mes_ano2$ano<-base_ano[i,]
+  base_mes_ano<-rbind(base_mes_ano,base_mes_ano2)
+}
+
+#Juntar con base original de mis ventas
+agg_mes_ano<-merge(agg_mes_ano[,1:3],base_mes_ano,by=c("ano","mes"),all=T)
+
+#Ordenar base
+agg_mes_ano<-agg_mes_ano[order(agg_mes_ano$ano,agg_mes_ano$mes_num),]
+
+#Reemplazar NA's con 0's
+agg_mes_ano[is.na(agg_mes_ano)] <- 0
+
+######HACER UN GRAFICO DE LINEA DE TODOS LOS MESES DE TODOS LOS ANOS EN LA MISMA VENTANA
+par(mfrow=c(1,1),cex=1.5)
+agg_mes_ano_desde_2012<-
+plot(agg_mes_ano$total,type="l",main=paste("Ventas por mes 2012-",
+                                             max(unique(agg_mes_ano$ano),sep="")),
+     xlab="Mes",ylab="Ventas mensuales ($)")
+```
+
+```{r,echo=F,fig.height = 7, fig.width = 9,fig.align="center"}
+
+#Dividir la base que tiene la cantidad vendida por mes de acuerdo al año
+agg_mes_ano_lista_por_ano<-split(agg_mes_ano,f=agg_mes_ano$ano)
+
+#Para cada año, realizar el acumulado de ventas mensuales
+for (i in 1:length(agg_mes_ano_lista_por_ano)){
+  
+  agg_mes_ano_lista_por_ano[[i]]$cumulativo<-cumsum(agg_mes_ano_lista_por_ano[[i]]$total)
+  
+}
+
+#Volver a pegar las bases ya con el acumulado calculado
+agg_mes_ano_lista_por_ano<-do.call("rbind",agg_mes_ano_lista_por_ano)
+
+#Necesito asignarle un número a la fecha actual pero mi base con los meses y correspondientes números tiene el mes abreviado. Entonces voy a substaer las primeras 3 letras de la mes actual para después empalmarlo con la base de mes y número de mes
+fecha_actual$mes_abb<-substr(fecha_actual$mes,1,3)
+fecha_actual<-unique(merge(fecha_actual,mes_num[,c("mes","mes_num")],by.x="mes_abb",by.y="mes",all=F))
+
+#Si el mes actual es mayor al de mi base, poner NA para que en la gráfica no salga una línea
+agg_mes_ano_lista_por_ano$cumulativo<-ifelse(agg_mes_ano_lista_por_ano$ano==fecha_actual$ano & agg_mes_ano_lista_por_ano$mes_num>fecha_actual$mes_num,NA,agg_mes_ano_lista_por_ano$cumulativo)
+
+#Graficar
+library(ggplot2)
+    #GGPLOT
+    qplot(x=mes_num, y=cumulativo, 
+           data=agg_mes_ano_lista_por_ano, 
+           colour=ano, 
+           main="Acumulado de ventas por mes y año") +
+      geom_line() + scale_x_discrete(name="Mes", limits=unique(agg_mes_ano_lista_por_ano$mes)) + ylab("Acumulado de ventas ($)") + theme(plot.title = element_text(hjust = 0.5))
+    
+    #qplot(x=mes_num, y=cumulativo, 
+     #      data=subset(com_mes_ano_lista_por_ano,com_mes_ano_lista_por_ano$ano>=2017), 
+      #     colour=ano, 
+       #    main="Acumulado de ventas por mes y año") +
+      #geom_line() + scale_x_discrete(name="Mes", limits=unique(com_mes_ano_lista_por_ano$mes)) + ylab("Acumulado de compras") + theme(plot.title = element_text(hjust = 0.5))
+
+```
+
+
+```{r,echo=F,fig.height = 7, fig.width = 9,fig.align="center"}
+# Ingresos de Abril por año
+##HACER UN BARPLOT DE LAS VENTAS POR ANO DE CADA MES PERO YO ESPECIFICO EL MES Y ESTA
+#SOLITO EL GRAFICO
+par(mfrow=c(1,1),cex=1.3)
+#Especificar el mes que quiero analizar
+#mes_analizar<-"Mar"
+b<-barplot(subset(agg_mes_ano,agg_mes_ano$mes==mes_analizar & agg_mes_ano$ano>2011)$total,
+           main=paste("Ingresos de",mes_analizar),ylab="Ventas ($)",
+           ylim=c(0,max(subset(agg_mes_ano,agg_mes_ano$mes==mes_analizar & agg_mes_ano$ano>2011)$total,
+                            na.rm=T)),xlab="Año")
+    axis(1,at=b,labels=unique(subset(agg_mes_ano,agg_mes_ano$ano>2011)$ano))
+    abline(h=mean(subset(agg_mes_ano,agg_mes_ano$mes==mes_analizar  & agg_mes_ano$ano>2011 & 
+                           agg_mes_ano$ano<as.numeric(as.character(fecha_actual$ano)))$total,na.rm=T),
+           col="red")
+```
+
+```{r,include=F}
+#Hacer un subset de solo los clientes que son de menudeo y sin incluir flete o sustrato (solo plantas)
+#OJO: AL HACER ESTE SUBSET TAMBIÉN ESTOY SACANDO LAS PLANTAS GRANDES DE JARDIN. ESTO LO
+#HAGO PORQUE HUBO UNA PERSONA QUE ME COMPRÓ MUCHAS PLANTAS DE LA MISMA ESPECIE
+ventas2<-subset(ventas,ventas$Menudeo==1)
+ventas2<-subset(ventas2,ventas2$Tamano_maceta<=5)
+
+
+#Agregar
+com_prom<-aggregate(ventas2$Total,
+                    by=list(Cliente=paste(ventas2$Nombre,ventas2$Apellido),
+                            Fecha=ventas2$Fecha_compra),FUN=sum)
+#Rename columns
+colnames(com_prom)[3]<-"Total"
+```
+
+
+```{r,echo=F,fig.height = 7, fig.width = 9,fig.align="center"}
+# Total de las ventas por cliente
+#Quitar el ano 2011 porque solamente tengo dato de una persona que me compro
+com_prom<-subset(com_prom,strftime(com_prom$Fecha, "%Y")>2011)
+
+#Boxplot de la cantidad de dinero que me compra cada cliente por ano
+par(cex=1.5)
+boxplot(com_prom$Total~strftime(com_prom$Fecha, "%Y"),xlab="Año",ylab="Ventas ($)",
+        main="Total de la venta por cliente")
+
+```
+
+
+
+```{r,echo=F,fig.height = 7, fig.width = 9,fig.align="center"}
+# Total de las ventas por cliente por mes sólo en el año actual
+#Quitar el ano 2011 porque solamente tengo dato de una persona que me compro
+com_prom2<-subset(com_prom,strftime(com_prom$Fecha, "%Y")==fecha_actual$ano)
+
+#Obtener el mes de cada compra
+com_prom2$mes<-strftime(com_prom2$Fecha, "%b")
+
+#Hacer base de los nombres de los meses con el numero del mes
+mes_num<-data.frame(mes_nom=c("Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep",
+                              "Oct","Nov","Dec"),mes_num=seq(from=1,to=12))
+
+
+#Unir base de los meses y anos con la base de ingresos
+com_prom2<-merge(com_prom2,mes_num,by.x="mes",by.y="mes_nom",all=F)
+
+#Ordenar por ano y mes
+com_prom2<-com_prom2[order(com_prom2$mes_num),]
+
+#Boxplot de la cantidad de dinero que me compra cada cliente por mes del 2018
+par(cex=1.5)
+boxplot(com_prom2$Total~com_prom2$mes_num,xlab="Mes",ylab="Ventas ($)",
+        main=paste("Total de la venta por cliente por mes en","2018"), names.arg=unique(com_prom2$mes))
+```
+
+**Las ventas del mes y comision de Esa**
+```{r}
+library("formattable")
+currency(subset(agg_mes_ano,agg_mes_ano$mes==mes_analizar & agg_mes_ano$ano==fecha_actual$ano)$total, digits = 2L)
+currency(subset(agg_mes_ano,agg_mes_ano$mes==mes_analizar & agg_mes_ano$ano==fecha_actual$ano)$total, digits = 2L)*0.1
+```
