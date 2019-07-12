@@ -1,0 +1,276 @@
+---
+title: "Tiempo envio paquetes"
+author: "Luis Antonio Arias Medellín"
+date: "6/17/2019"
+output: html_document
+---
+```{r}
+#Abrir paquetes
+rm(list = ls())
+library("rmarkdown")
+library("dplyr")
+library("ggplot2")
+
+#Importar funciones
+source("Funciones/Limpieza bases.R")
+
+#Ejectuar función para limpiar la base de datos
+limpiar.base.ventas()
+```
+
+```{r,echo=F}
+#Boxplot de costo de los fletes pequenos
+read.xlsx("Base de datos/Gastos ventas.xlsx",sheet=1) %>% 
+  mutate(Fecha_compra=as.Date(as.numeric(Fecha_compra),origin = "1899-12-30")) %>% 
+  filter(Tamano_maceta<=5 | Genero=="Flete") %>% 
+  filter(Genero=="Flete") %>% 
+  filter(Fecha_compra>=2017) %>% 
+  filter(Precio_unitario<=300) %>% 
+  ggplot(aes(x=Especie,y=Precio_unitario)) +
+  geom_boxplot()
+```
+
+```{r,echo=F}
+#Histograma de costo de los fletes pequenos
+read.xlsx("Base de datos/Gastos ventas.xlsx",sheet=1) %>% 
+  mutate(Fecha_compra=as.Date(as.numeric(Fecha_compra),origin = "1899-12-30")) %>% 
+  filter(Tamano_maceta<=5 | Genero=="Flete") %>% 
+  filter(Genero=="Flete") %>% 
+  filter(Fecha_compra>=2017) %>% 
+  filter(Precio_unitario<=300) %>% 
+  ggplot(aes(x=Precio_unitario)) +
+  geom_histogram() +
+  facet_wrap(~Especie)
+```
+
+
+```{r,include=F}
+####ANALISIS DE CUANTO TARDA EN LLEGAR UN PAQUETE A SU DESTINO####
+#Hacer un subset de solo los clientes que son de menudeo y de los fletes
+fletes<-subset(ventas,ventas$Menudeo==1)
+fletes<-subset(fletes,fletes$Genero=="Flete")
+fletes<-subset(fletes,fletes$Fecha_envio>=2017)
+
+#Obtener el numero de dias que tardo en llegar el paquete
+fletes$dias<-fletes$Fecha_recibido-fletes$Fecha_envio
+```
+
+
+```{r,echo=F}
+#Resumen de los dias
+summary(as.numeric(fletes$dias))
+tapply(as.numeric(fletes$dias), fletes$Especie, mean,na.rm=T)
+tapply(as.numeric(fletes$dias), fletes$Especie, sd,na.rm=T)
+tapply(as.numeric(fletes$dias), fletes$Especie, range,na.rm=T)
+
+#Boxplot de dias
+b<-boxplot(as.numeric(fletes$dias)~fletes$Especie, xlab="Compañía", ylab="Días",
+           main="Días en que tarda en llegar un paquete a su destino final")
+text(1:length(b$n), b$stats[5,]+2, paste("n=", b$n))
+
+#Mismo boxplot con ggplot
+#fletes %>% 
+#  mutate(dias=as.numeric(as.character(dias))) %>% 
+#  filter(Especie!="Fedex Express") %>% 
+#  filter(Especie!="Correos de Mexico") %>% 
+#  ggplot(aes(x=Especie,y=dias)) +
+#  geom_boxplot() +
+#  xlab("Paquetería") +
+#  ylab("Días")
+
+#Boxplot de numero de envios por paqueteria por mes y ano
+fletes %>% 
+  mutate(ano_mes=strftime(Fecha_compra,"%Y-%m")) %>% 
+  group_by(Especie,ano_mes) %>% 
+  summarise(conteos=n()) %>% 
+  ggplot(aes(x=Especie,y=conteos)) +
+  geom_boxplot() +
+  xlab("Compañía") +
+  ylab("Número de paquetes enviados") +
+  ggtitle("Número de envios mensuales")
+
+#Serie de tiempo de numero de envios por paqueteria por mes y ano
+serie.tiempo.fletes<-fletes %>% 
+  mutate(ano_mes=strftime(Fecha_compra,"%Y-%m")) %>% 
+  group_by(Especie,ano_mes) %>% 
+  summarise(conteos=n()) %>%
+  ungroup()
+  
+  serie.tiempo.media<-fletes %>% 
+  mutate(ano_mes=strftime(Fecha_compra,"%Y-%m")) %>% 
+  group_by(Especie,ano_mes) %>% 
+  summarise(conteos=n()) %>% 
+    ungroup() %>% 
+    group_by(Especie) %>% 
+    summarise(media=mean(conteos))
+
+serie.tiempo.fletes %>% 
+ggplot(aes(x = ano_mes, y = conteos,group=Especie))+
+  geom_line() +
+  facet_wrap(~Especie) +
+  geom_hline(aes(yintercept = media),serie.tiempo.media,col="red") +
+  theme(axis.text.x=element_text(angle=45, hjust=1)) +
+  xlab("Año y mes") +
+  ylab("Número de envios") +
+  ggtitle("Número de envios por año y mes")
+
+#Histograma de cuánto tarda en llegar un paquete de Redpack
+hist(as.numeric(subset(fletes,fletes$Especie=="Redpack")$dias))
+
+#Hacer una base con dias que tardo en llegar el paquete y a que estado se envio
+fletes<-subset(fletes,select=c("Nombre","Apellido","Fecha_compra","Genero","Especie",
+                               "Ciudad_envio","Estado_envio","dias"))
+
+#Boxplot de dias
+b<-boxplot(as.numeric(fletes$dias)~fletes$Especie, xlab="Días", ylab="Compañía",
+           main="Días en que tarda en llegar un paquete a su destino final")
+text(1:length(b$n), b$stats[5,]+2, paste("n=", b$n))
+```
+
+
+```{r,include=F}
+#Analisis de diferencia en el numero de dias que tardan en llegar los paquetes por compania usando ANOVA
+#Boxplot de logaritmo de días 
+b<-boxplot(log(as.numeric(fletes$dias))~fletes$Especie, xlab="Días", ylab="Compañía",
+           main="Días en que tarda en llegar un paquete a su destino final",
+           ylim=c(0,max(log(as.numeric(fletes$dias)),na.rm=T)+1))
+text(1:length(b$n), b$stats[5,]+1, paste("n=", b$n))
+#ANOVA sin transformar días
+anova<-aov(as.numeric(dias)~Especie,data=subset(fletes,fletes$Especie!="Fedex Express"))
+summary(anova)
+plot(anova)
+
+#ANOVA con logaritmo de días
+anova.log<-aov(log(as.numeric(dias))~Especie,data=subset(fletes,fletes$Especie!="Fedex Express"))
+summary(anova.log)
+plot(anova.log)
+hist(anova.log$residuals)
+
+#Post Tukey test
+TukeyHSD(anova.log)
+```
+
+
+```{r,echo=F}
+#Resumen de días en los que se tarda en realizar una entrega excluyendo Correos de México
+summary(as.numeric(subset(fletes,fletes$Especie!="Correos de Mexico" & 
+                            fletes$dias<15)$dias),na.rm=T)
+
+#Hacer boxplot de tiempo que tardo en llegar el paquete de acuerdo al estado y paqueteria
+#par(mar=c(8,4,3,2),mfrow=c(2,3))
+#for (i in unique(fletes$Especie)){
+#  b<-boxplot(as.numeric(subset(fletes,fletes$Especie==i)$dias)~subset(fletes,fletes$Especie==i)$Estado_envio,
+#             main=i,ylab="Dias de entrega",las=2)
+#  text(1:length(b$n), b$stats[5,]+1, b$n) #paste("n=", b$n))
+#}
+
+source("Funciones/Tiempo de envio paquetes.R")
+
+#Todas las paqueterías
+fletes %>% 
+  mutate(dias=as.numeric(as.character(dias))) %>% 
+  ggplot(aes(x=Estado_envio,y=dias)) +
+  geom_boxplot() +
+  facet_wrap(~Especie) +
+  theme(axis.text.x = element_text(angle = 90)) +
+  xlab("Estado") +
+  ylab("Días") +
+  stat_summary(
+    fun.data = stat_box_data, #Funcion importada source
+    geom = "text", 
+    hjust = 0.5,
+    vjust = 0.9
+  ) 
+
+#Sin incluir Fedex Express y Correos de México
+fletes %>% 
+  mutate(dias=as.numeric(as.character(dias))) %>% 
+  filter(Especie!="Fedex Express") %>% 
+  filter(Especie!="Correos de Mexico") %>% 
+  ggplot(aes(x=Estado_envio,y=dias)) +
+  geom_boxplot() +
+  facet_wrap(~Especie) +
+  theme(axis.text.x = element_text(angle = 90)) +
+  xlab("Estado") +
+  ylab("Días") #+
+  #stat_summary(
+   # fun.data = stat_box_data, 
+  #  geom = "text", 
+  #  hjust = 0.5,
+  #  vjust = 0.9
+  #) 
+
+#Sin incluir un outlier de Redpack de 21 días
+fletes %>% 
+  mutate(dias=as.numeric(as.character(dias))) %>% 
+  filter(Especie!="Fedex Express") %>% 
+  filter(Especie!="Correos de Mexico",
+         dias<21) %>% 
+  ggplot(aes(x=Estado_envio,y=dias)) +
+  geom_boxplot() +
+  facet_wrap(~Especie) +
+  theme(axis.text.x = element_text(angle = 90)) +
+  xlab("Estado") +
+  ylab("Días") 
+
+#Agregar el boxplot por paquetería sin importar el destino para comparar
+b<-boxplot(as.numeric(fletes$dias)~fletes$Especie, xlab="Días", ylab="Compañía",
+           main="Días en que tarda en llegar un paquete a su destino final")
+text(1:length(b$n), b$stats[5,]+2, paste("n=", b$n))
+
+#Mediana del numero de dias que tarda en llegar un paquete
+tapply(as.numeric(subset(fletes,fletes$Especie=="Redpack")$dias), 
+       subset(fletes,fletes$Especie=="Redpack")$Estado, median)
+
+#Numero de envios por flete
+fletes %>% 
+  ggplot(aes(x=Especie)) + 
+  geom_bar() +
+  xlab("Compañía") +
+  ylab("Conteos") +
+  ggtitle("Número de envíos por compañía")
+```
+
+
+```{r}
+
+####ANALISIS DE CUANTO TARDo EN MANDAR UN PAQUETE A SU DESTINO####
+#Hacer un subset de solo los clientes que son de menudeo y de los fletes
+dias_envio<-subset(ventas,ventas$Menudeo==1)
+dias_envio<-subset(dias_envio,dias_envio$Genero=="Flete")
+dias_envio<-subset(dias_envio,dias_envio$Fecha_envio>=2017)
+
+#Obtener el numero de dias que tardo en mandar el paquete
+dias_envio$dias_envio<-dias_envio$Fecha_envio-dias_envio$Fecha_compra
+
+#Resumen de los dias
+summary(as.numeric(dias_envio$dias_envio))
+
+#Hay dias negativos, ver cuales son
+dias_envio %>% 
+  filter(dias_envio<=0)
+
+dias_envio<-dias_envio %>% 
+  filter(dias_envio>=0)
+
+#Boxplot de dias
+boxplot(as.numeric(dias_envio$dias),main="Días que tardo en enviar paquete",ylab="Días")
+boxplot(as.numeric(subset(dias_envio,dias_envio<14)$dias),
+        main="Días que tardo en enviar paquete",ylab="Días")
+
+#Histograma de los dias. RESOLVER PROBLEMA AQUI QUE LOS DATOS SE REPITEN PARA ALGUNOS CLIENTES
+hist(as.numeric(dias_envio$dias),main="Días que tardo en enviar paquete",
+     ylab="Conteos",xlab="Días")
+
+hist(as.numeric(subset(dias_envio,dias_envio<=15)$dias),
+     main="Días que tardo en enviar paquete",ylab="Frecuencia",xlab="Días")
+abline(v=mean(dias_envio$dias_envio),col="red")
+
+hist(as.numeric(subset(dias_envio,dias_envio<=15)$dias),
+     main="Días que tardo en enviar paquete",ylab="Frecuencia",xlab="Días",breaks=0:15)
+abline(v=mean(dias_envio$dias_envio),col="red")
+
+#hist(as.numeric(subset(dias_envio,dias_envio<=15)$dias),
+#     main="Días que tardo en enviar paquete",ylab="Frecuencia",xlab="Días",breaks=0:15,freq = F)
+```
+
