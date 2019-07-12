@@ -1,0 +1,632 @@
+---
+title: "Reporte financiero Verdi"
+author: "Luis Antonio Arias Medellín"
+date: "11/24/2018"
+output: html_document
+---
+
+
+```{r, include=F}
+rm(list = ls())
+library("rmarkdown")
+library("dplyr")
+library("ggplot2")
+library("tidyr")
+
+#Importar funciones
+source("Funciones/Limpieza bases.R")
+source("Funciones/funciones analisis base datos verdi.R")
+
+#Ejectuar función para limpiar la base de datos
+limpiar.base.ventas()
+
+#Ventas anuales. Extraer el ano de cada venta
+ventas$ano<-strftime(ventas$Fecha_compra, "%Y")
+
+#Agregar por ano
+agg_ano<-aggregate(ventas$Total,by=list(ano=ventas$ano),FUN=sum,na.rm=T)
+
+#Renombrar columnas
+colnames(agg_ano)[2]<-"total"
+
+#Ejecutar funcion para limpiar la base de gastos
+limpiar.base.gastos()
+
+#Extraer ano de la fecha
+gastos_plantas$ano<-strftime(gastos_plantas$Fecha_compra, "%Y")
+
+#Etiquetar bases de acuerdo si son ventas o gastos
+ventas$cat<-"ventas"
+gastos_plantas$cat<-'gastos'
+gastos_general$cat<-'gastos'
+
+#Hacer una base donde voy a agregar por mes dependiendo si es venta o gasto
+#Etiquetar bases en categorias: Fletes, plantas, Gasolina, Salario
+gastos_plantas$cat2<-gastos_plantas$cat
+gastos_plantas$Tipo_gasto<-"Plantas_pedidos"
+#Fletes
+gastos_plantas$cat<-ifelse(gastos_plantas$Genero=="Flete","Fletes",gastos_plantas$cat)
+
+#Compra de plantas para vender
+table(gastos_plantas$Proveedor)
+gastos_plantas$cat<-ifelse(gastos_plantas$Proveedor=="Tono" | 
+                             gastos_plantas$Proveedor=="Yautepec" | 
+                             gastos_plantas$Proveedor=="Cuautla" |
+                             gastos_plantas$Proveedor=="La viznaga vagabunda" |
+                             gastos_plantas$Proveedor=="Tetela" |
+                             gastos_plantas$Proveedor=="Verdi" |
+                             gastos_plantas$Proveedor=="El pedregal","Plantas",
+                           gastos_plantas$cat)
+
+#Gasolina
+gastos_plantas$cat<-ifelse(gastos_plantas$Proveedor=="Gasolina","Gasolina",
+                           gastos_plantas$cat)
+
+#Salario
+gastos_plantas$cat<-ifelse(gastos_plantas$Proveedor=="Salario","Salario",
+                           gastos_plantas$cat)
+
+#Comisión de mercado libre o paypal
+gastos_plantas$cat<-ifelse(gastos_plantas$Proveedor=="Comision","Comision",
+                           gastos_plantas$cat)
+
+#Tono, Cuautla y Yautepec = Proveedores_plantas, Verdi = Verdi_promocion
+#Agrego una columna que se llame cat para que concuerde con las columnas de gastos_plantas
+gastos_general$cat<-gastos_general$Categoria
+
+#Aqui tomé la decisión de incluir las cajas que compro como parte de los gastos que realizo cada vez que surto una planta. Entonces, como los gastos que tengo cada vez que surto una planta están en gastos plantas y el Tipo gasto y cat de esa base es Plantas pedidos y Caja, tengo que cambiarlo aca para que se agrege
+gastos_general$Tipo_gasto<-ifelse(substr(gastos_general$Descripcion,1,4)=="Caja",
+                           "Plantas_pedidos",
+                           gastos_general$Tipo_gasto)
+
+gastos_general$cat<-ifelse(gastos_general$Tipo_gasto=="Plantas_pedidos",
+                                  "Fletes",
+                                  gastos_general$cat)
+
+#Unir las bases de gastos de la compra de plantas (los gastos que se tiene cada vez que se compra una planta, que incluiria el precio al que yo compro la planta al proveedor,
+#salario, comision de paypal y mercado libre, compra de cajas para mandar paquetes) y gastos en general (otros gastos que no tienen que ver con la compra de planta, seria mas que nada en que invierto el dinero para hacer crecer la empresa generalmente) 
+#base_gastos_ventas_desglos<-rbind(ventas[,c(3,10,22)],gastos_plantas[,c(4,11,13)],gastos_general[,c(3,8,10)])
+base_gastos_ventas_desglos<-rbind(subset(gastos_plantas,select=c("Fecha","Total","Tipo_gasto","cat")),
+                                  subset(gastos_general,select=c("Fecha","Total","Tipo_gasto","cat")))
+
+#Ventas por ano. Extraer el ano de cada venta
+base_gastos_ventas_desglos$ano<-strftime(base_gastos_ventas_desglos$Fecha, "%Y")
+
+#Agregar gastos y ventas por categorias y tipo de gasto. La categoria es un nombre que le doy al gasto pero es muy generico (Plantas madre, comision, fletes, etc) mientras que el Tipo gasto es mas especifico (Flete=cajas, guias, cinta adhesiva, etc)
+base_gastos_ventas_agg<-aggregate(base_gastos_ventas_desglos$Total,
+                                  by=list(cat=base_gastos_ventas_desglos$cat,
+                                          Tipo_gasto=base_gastos_ventas_desglos$Tipo_gasto,
+                                          ano=base_gastos_ventas_desglos$ano),
+                                  FUN=sum,na.rm=T)
+
+#Renombrar columnas
+colnames(base_gastos_ventas_agg)[4]<-"Total"
+
+#Calcular los gastos cada vez que se hace un pedido
+gasto_por_pedido<-base_gastos_ventas_agg %>% 
+  filter(Tipo_gasto=="Plantas_pedidos") %>% 
+  group_by(ano) %>% 
+  summarise(Total=sum(Total)) %>% 
+  ungroup()
+
+#Obtener la ganacia anual
+ganancia_ano<-gasto_por_pedido %>% 
+  inner_join(agg_ano,by="ano") %>% 
+  mutate(ganancia=total-Total) %>%
+  select(-total)
+
+#Tengo que no tomar en cuenta lo que se gasta cada vez que compro una planta (plantas pedidos + fletes)
+inversion<-base_gastos_ventas_agg %>% 
+  filter(Tipo_gasto!="Plantas_pedidos") %>% 
+  group_by(ano) %>% 
+  summarise(Total=sum(Total)) %>% 
+  ungroup()
+
+#Sacar la proporcion de cada categoría
+prop_ganancia_gastos<-data.frame(ano=ganancia_ano$ano,Ganancia=round(ganancia_ano$ganancia/(ganancia_ano$ganancia+ganancia_ano$Total)*100,2),Gastos_por_pedido=round(ganancia_ano$Total/(ganancia_ano$ganancia+ganancia_ano$Total)*100,2)) %>% 
+  gather(concepto,total,Ganancia,Gastos_por_pedido) %>% 
+  arrange(ano,desc(concepto))
+```
+
+##Ventas, gastos y ganancias anuales
+```{r}
+ganancia_ano %>%
+  rename(Gasto.por.venta=Total,
+         Ganancia=ganancia) %>% 
+  gather(Concepto,total,Gasto.por.venta,Ganancia) %>% 
+  ggplot() + geom_bar(aes(x = ano, y = total, fill = Concepto), stat="identity") +
+  geom_text(aes(x=ano,y=total+8000),label=paste(prop_ganancia_gastos$total,"%",sep=" ")) + #Le tengo que agregar agregar un valor a la etiqueta para que la posición quede bien
+  ylab("Pesos mexicanos (MXN)") +
+  xlab("Año")
+
+
+#Hacer una base de datos de las ganancias y las proporciones en formato long
+ganancia_ano_long<-ganancia_ano %>%
+  rename(Gasto.por.venta=Total,
+         Ganancia=ganancia) %>% 
+  gather(Concepto,total,Gasto.por.venta,Ganancia) %>% 
+  arrange(ano) %>% #Se tiene que ordenar de esta manera
+  bind_cols(select(prop_ganancia_gastos,total)) %>% #Unir con la base que representa la proporción por categoría
+  rename(proporcion=total1) %>% 
+  mutate(position=total*0.85) #Esto es para desfasar el texto una determinada cantidad
+
+#Aqui no se si poner solamente el porcentaje de la ganancia o si poner cuanto se gano acutalmente
+ganancia_ano_long %>% 
+  ggplot() + geom_bar(aes(x = ano, y = total, fill = Concepto), stat="identity") +
+  geom_text(aes(x=ano,y=position),label=paste("$",format(ganancia_ano_long$total,big.mark=","),"(",ganancia_ano_long$proporcion,"%)"),position = position_stack()) +
+  ylab("Pesos mexicanos (MXN)") +
+  xlab("Año")
+
+ganancia_ano_long %>% 
+  ggplot() + geom_bar(aes(x = ano, y = total, fill = Concepto), stat="identity") +
+  geom_text(aes(x=ano,y=position),label=paste("$",format(ganancia_ano_long$total,big.mark=","),"(",ganancia_ano_long$proporcion,"%)"),position = position_stack()) +
+  ylab("Pesos mexicanos (MXN)") +
+  xlab("Año")
+```
+
+#Ganancia por año
+```{r,echo=F}
+#Ganancia por año significa cuánto gano sin tomar en cuenta gastos como inversiones
+ganancia_ano %>%
+  ggplot(aes(x=ano,y=ganancia)) + 
+  geom_col() +
+  theme(legend.position = "none") +
+  xlab("Año") +
+  ylab("Pesos mexicanos (MXN)") #+
+  #ggtitle("Ganancia por año")
+  
+```
+
+#Ganancia neta por año
+```{r,echo=F}
+#Ganancia neta por año es la ganancia que tuve menos la inversión que hice
+base_gastos_ventas_agg %>% 
+  filter(Tipo_gasto!="Plantas_pedidos") %>% 
+  group_by(ano) %>% 
+  summarise(Total.gastos=sum(Total)) %>%
+  inner_join(select(ganancia_ano,-Total),by="ano") %>% 
+  mutate(ganancia.neta=ganancia-Total.gastos) %>% 
+  mutate(color=if_else(ganancia.neta<0,"blue","red")) %>% 
+  ggplot(aes(x=ano,y=ganancia.neta)) + 
+  geom_col(aes(fill=color)) +
+  theme(legend.position = "none") +
+  xlab("Año") +
+  ylab("Pesos mexicanos (MXN)") +
+  ggtitle("Ganancia neta por año")
+  
+```
+
+
+#Desgolse de la inversión del dinero por año
+```{r,echo=F,fig.width=16, fig.height=8,align="center"}
+#Hacer Gráfica de pastel de los gastos en inversión 
+library("dplyr")
+
+#Quitar gastos  que no son parte de inversion
+gastos_inversion_ano_analisis<-base_gastos_ventas_agg %>% 
+  filter(cat!="Fletes") %>% #Cajas cuando se realiza un envío
+  filter(cat!="Gasolina") %>% 
+  filter(cat!="Plantas") %>% #Compra de plantas cuando las piden
+  filter(cat!="Arreglos") %>% #Arreglo día de las madres
+  filter(cat!="gastos") %>% #No sé
+  filter(cat!="Publicidad") %>% #Pulbicidad facebook día de las madres
+  filter(cat!="Comision") %>% #Comision por cada compra
+  filter(cat!="Salario") 
+
+#Hacer una base de datos de la inversión por categoría tomando en cuenta todos los años
+gastos_inversion_todos_anos<-gastos_inversion_ano_analisis %>% 
+  group_by(cat) %>% 
+  summarise(Total=sum(Total)) %>% 
+  ungroup()
+
+#Graficar
+pie(gastos_inversion_todos_anos$Total,labels=paste(gastos_inversion_todos_anos$cat," = $",format(round(gastos_inversion_todos_anos$Total),2,big.mark=",")," (",round(prop.table(gastos_inversion_todos_anos$Total)*100,2),"%)",sep=""),cex.main=2.3,cex=1.3,main=paste("Gastos en inversión entre ",min(gastos_inversion_ano_analisis$ano)," y ",max(gastos_inversion_ano_analisis$ano)," ($", format(round(sum(gastos_inversion_todos_anos$Total),2),big.mark=","),")",sep=""))
+  
+#Graficar por año
+for (i in unique(base_gastos_ventas_agg$ano)){
+  
+  d<-gastos_inversion_ano_analisis %>% 
+    filter(ano==i)
+  
+par(mfrow=c(1,1),mar=c(2,4,2,4),xpd=T)
+pie(d$Total,labels=paste(d$cat," = $",format(round(d$Total),2,big.mark=",")," (",round(prop.table(d$Total)*100,2),"%)",sep=""),cex.main=2.3,cex=1.3,main=paste("Gastos en inversión en ",i," ($", format(round(sum(d$Total),2),big.mark=","),")",sep=""))
+
+}
+```
+
+
+#Este codigo es el que voy a modificar
+```{r,include=F}
+##Extraer el año y meses en las bases que hagan falta que se les extraiga
+gastos_general$ano<-strftime(gastos_general$Fecha, "%Y")
+gastos_general$mes<-as.numeric(strftime(gastos_general$Fecha, "%m"))
+ventas$mes<-as.numeric(strftime(ventas$Fecha_compra, "%m"))
+gastos_plantas$mes<-as.numeric(strftime(gastos_plantas$Fecha, "%m"))
+
+anos.ventas<-data.frame(anos=unique(ventas$ano))
+anos.ventas<-anos.ventas %>% 
+  arrange(anos)
+
+#Base de lista de meses
+lista.meses<-data.frame(ano=rep(anos.ventas$anos,each=12) ,mes=rep(1:12,length(unique(ventas$ano))),mes_ab=rep(c("Ene","Feb","Mar","Abr","May","Jun","Jul","Ago","Sep","Oct","Nov","Dec"),length(unique(ventas$ano)))) %>% 
+  arrange(ano,mes)
+
+#Agregar los datos mensualmente en todas las bases ******
+ventas_por_mes_ano<-ventas %>% 
+  #filter(ano==as.character(ano.analisis)) %>% 
+  group_by(ano,mes) %>% 
+  summarise(total_ventas=sum(Total),na.rm=T) %>% 
+  full_join(lista.meses,by=c("ano","mes")) %>%
+  select(ano,mes,mes_ab,total_ventas) %>% 
+  arrange(ano,mes) %>% 
+  ungroup()
+
+gastos_general_por_mes_ano<-gastos_general %>% 
+  #filter(ano==as.character(ano.analisis)) %>% 
+  group_by(ano,mes) %>% 
+  summarise(total_gastos_general=sum(Total,na.rm=T)) %>% 
+  full_join(lista.meses,by=c("ano","mes")) %>%
+  select(ano,mes,mes_ab,total_gastos_general) %>% 
+  mutate(total_gastos_general,total_gastos_general=ifelse(is.na(total_gastos_general), 0, total_gastos_general)) %>% 
+  ungroup()
+
+gastos_plantas_por_mes_ano<-gastos_plantas %>% 
+  #filter(ano==as.character(ano.analisis)) %>% 
+  group_by(ano,mes) %>% 
+  summarise(total_gastos_plantas=sum(Total,na.rm=T)) %>% 
+  full_join(lista.meses,by=c("ano","mes")) %>%
+  select(ano,mes,mes_ab,total_gastos_plantas) %>% 
+  ungroup()
+
+#Pegar las tres bases para hacer obtener ganancia mensual
+ganancia.neta.por.mes.ano<-ventas_por_mes_ano %>% 
+  inner_join(gastos_general_por_mes_ano[,-3],by=c("ano","mes")) %>% 
+  inner_join(gastos_plantas_por_mes_ano[,-3],by=c("ano","mes"))
+
+#Obtener ganancia mensual
+ganancia.neta.por.mes.ano$ganancia_mensual<-ganancia.neta.por.mes.ano$total_ventas-ganancia.neta.por.mes.ano$total_gastos_general-ganancia.neta.por.mes.ano$total_gastos_plantas
+
+##BASE DE DATOS PARA HACER GRAFICO DE PASTEL
+#Obtener mes
+base_gastos_ventas_desglos$mes<-as.numeric(strftime(base_gastos_ventas_desglos$Fecha, "%m"))
+
+#Sacar los gastos por mes por categría de gasto
+gastos.por.mes.ano<-base_gastos_ventas_desglos %>% 
+  #filter(ano==as.character(ano.analisis)) %>% 
+  group_by(ano,mes,Tipo_gasto,cat) %>% 
+  summarise(total=sum(Total,na.rm=T)) %>% 
+  inner_join(lista.meses,by="mes") %>% 
+  filter(cat!="Fletes") %>% #Cajas cuando se realiza un envío
+  filter(cat!="Gasolina") %>% 
+  filter(cat!="Plantas") %>% #Compra de plantas cuando las piden
+  filter(cat!="Arreglos") %>% #Arreglo día de las madres
+  filter(cat!="gastos") %>% #No sé
+  filter(cat!="Publicidad") %>%  #Pulbicidad facebook día de las madres
+  ungroup()
+
+#Seleccionar mes a analizar
+mes.analizar<-"Oct"
+gastos.por.mes.ano.selec<-subset(gastos.por.mes.ano,gastos.por.mes.ano$mes_ab==mes.analizar)
+```
+
+
+
+
+##¿En qué invertí el dinero en los meses que tuve poca ganancia?
+* Enero: se invirtió **$7,073.61** en el **invernadero**
+* Marzo: se invirtieron **$1,853.55** en la **pagina de Internet** y **$790** en el **salario de Tania**.
+* Mayo: se invirtieron  **$3,210.85** en la **pagina de Internet** y **$1,010** en el **salario de Tania**.
+* Julio: se invirtió **$1,111.50** en el **salario**
+
+#Este es el codigo que voy a modificar
+```{r,echo=F,fig.width=14, fig.height=6,align="center"}
+#Graficar
+par(mar=c(6,6,2,2))
+
+#ganancia.neta.por.mes.ano %>% 
+#  filter(ano>=2017) %>% 
+#  ggplot(aes(x=mes,y=ganancia_mensual,group=ano)) +
+#  geom_line() +
+#  geom_point() +
+#  geom_hline(yintercept=0,color="red") +
+#  scale_x_discrete(name ="Mes",limits=lista.meses$mes_ab) +
+#  ylab("Pesos mexicanos (MXN)") +
+#  ggtitle("Ganancia mensual por año") +
+#  facet_wrap(~ano) +
+#  theme(axis.text.x=element_text(hjust=1,angle=45),
+#        title = element_text(hjust=0.5))
+
+ganancia.neta.por.mes.ano %>% 
+  filter(ano>=2017) %>% 
+  select(ano,mes,mes_ab,total_ventas,total_gastos_plantas,total_gastos_general,ganancia_mensual) %>% 
+  gather(Categoria,total,total_ventas,total_gastos_plantas,total_gastos_general,ganancia_mensual) %>% 
+  ggplot(aes(x=mes,y=total,group=ano)) +
+  geom_hline(yintercept=0,color="red") +
+  geom_line(aes(group=Categoria,color=Categoria)) +
+  geom_point(aes(color=Categoria)) +
+  scale_x_discrete(name ="Mes",limits=lista.meses$mes_ab) +
+  ylab("Pesos mexicanos (MXN)") +
+  ggtitle("Ganancia mensual por año") +
+  facet_wrap(~ano) +
+  theme(axis.text.x=element_text(hjust=1,angle=45),
+        title = element_text(hjust=0.5))
+```
+
+#Grafica de pie por mes
+```{r}
+
+#Agregar gastos y ventas por categorias y tipo de gasto. La categoria es un nombre que le doy al gasto pero es muy generico (Plantas madre, comision, fletes, etc) mientras que el Tipo gasto es mas especifico (Flete=cajas, guias, cinta adhesiva, etc)
+base_gastos_ventas_agg_ano_mes<-base_gastos_ventas_desglos %>% 
+  inner_join(lista.meses,by=c("ano","mes")) %>% 
+  filter(Tipo_gasto!="Plantas_pedidos") %>% 
+  group_by(ano,mes_ab,cat) %>% 
+    summarise(Total=sum(Total,na.rm=T)) %>% 
+  ungroup()
+
+#Importar funciones
+source("Funciones/Reporte financiero2.R")
+
+#Hacer grafica
+grafica.pie(ano.analizar=2018,mes.analizar="Nov")
+
+
+```
+
+
+```{r,echo=F,fig.width=12, fig.height=8,align="center",include=F}
+#Graficar
+par(mfrow=c(1,1),mar=c(2,4,2,4),xpd=T)
+pie(gastos.por.mes.ano.analisis.selec$total,labels=paste(gastos.por.mes.ano.analisis.selec$cat," = $",format(gastos.por.mes.ano.analisis.selec$total,big.mark=",")," (",round(prop.table(gastos.por.mes.ano.analisis.selec$total)*100,2),"%)",sep=""),cex.main=1.7,cex=1.3,main=paste("Gastos en inversión en ",mes.analizar," ($", format(round(sum(gastos.por.mes.ano.analisis.selec$total),2),big.mark=","),")",sep=""))
+```
+
+
+```{r,echo=F,fig.width=12, fig.height=8,align="center",include=F}
+#Graficar
+for (i in unique(gastos.por.mes.ano$mes)){
+#par(mfrow=c(3,4),mar=c(2,4,2,4),xpd=T)
+  gastos.por.mes.ano.analisis.selec<-subset(gastos.por.mes.ano,gastos.por.mes.ano$mes==i)
+pie(gastos.por.mes.ano.analisis.selec$total,labels=paste(gastos.por.mes.ano.analisis.selec$cat," = $",format(gastos.por.mes.ano.analisis.selec$total,big.mark=",")," (",round(prop.table(gastos.por.mes.ano.analisis.selec$total)*100,2),"%)",sep=""),cex.main=1.7,cex=1.3,main=paste("Gastos en inversión en ",mes.analizar," ($", format(round(sum(gastos.por.mes.ano.analisis.selec$total),2),big.mark=","),")",sep=""))
+}
+```
+
+
+```{r,include=F}
+#Seleccionar solamente el ano a analizar
+ventas.ano.analisis<-subset(ventas,ventas$ano==ano.analisis)
+gastos_plantas.ano.analisis<-subset(gastos_plantas,gastos_plantas$ano==ano.analisis)
+
+#Hacer el merge de la base de ventas con la de la compra de plantas
+base_ventas_gastos_plantas_desglosado<-merge(ventas.ano.analisis[,c("Nombre","Apellido","Fecha_compra","Cantidad","Genero","Especie","Variedad","Tamano_maceta","Total")],gastos_plantas.ano.analisis[,c("Proveedor","Nombre","Apellido","Fecha_compra","Cantidad","Genero","Especie","Variedad","Tamano_maceta","Total","cat")],by=c("Nombre","Apellido","Fecha_compra","Cantidad","Genero","Especie","Variedad","Tamano_maceta"),all=T)
+
+
+#Cambiar el nombre de las columnas
+colnames(base_ventas_gastos_plantas_desglosado)[c(9,11)]<-c("Precio_venta","Precio_proveedor")
+
+#AQUI VOY A SACAR LA GANANCIA POR VENTA. PARA ELLO TENGO QUE SACAR CUANTO GASTE POR CADA VENTA Y CUAL FUE EL TOTAL DE LA VENTA Y RESTARLOS
+
+#BASE DE GANANCIA POR VENTA POR CLIENTE
+#Agregar el total vendido por cliente
+base_ventas_gastos_plantas_total_venta<-aggregate(base_ventas_gastos_plantas_desglosado$Precio_venta,by=list(Nombre=base_ventas_gastos_plantas_desglosado$Nombre,Apellido=base_ventas_gastos_plantas_desglosado$Apellido,Fecha_compra=base_ventas_gastos_plantas_desglosado$Fecha_compra),FUN=sum,na.rm=T)
+
+#Renombrar columna
+colnames(base_ventas_gastos_plantas_total_venta)[4]<-"total_venta"
+
+#Agregar el total gastado por venta por cliente
+base_ventas_gastos_plantas_gasto_por_venta<-aggregate(base_ventas_gastos_plantas_desglosado$Precio_proveedor,by=list(Nombre=base_ventas_gastos_plantas_desglosado$Nombre,Apellido=base_ventas_gastos_plantas_desglosado$Apellido,Fecha_compra=base_ventas_gastos_plantas_desglosado$Fecha_compra),FUN=sum,na.rm=T)
+
+#Renombrar columna
+colnames(base_ventas_gastos_plantas_gasto_por_venta)[4]<-"total_gasto_por_venta"
+
+#Empalmar las dos bases para hacer la resta de gastos por venta - total por venta
+base_ventas_gastos_plantas_ganancia_por_venta<-merge(base_ventas_gastos_plantas_gasto_por_venta,base_ventas_gastos_plantas_total_venta,by=c("Nombre","Apellido","Fecha_compra"),all=T)
+
+#Obtener la ganacia por venta. Aquí el total me refiero a la ganancia de la venta, pero le tengo que poner como nombre "total" para empalmar con la base de gastos
+base_ventas_gastos_plantas_ganancia_por_venta$total<-base_ventas_gastos_plantas_ganancia_por_venta$total_venta - base_ventas_gastos_plantas_ganancia_por_venta$total_gasto_por_venta
+
+#Agregar la etiqueta de Ganancia para empalmar con la base de gastos
+base_ventas_gastos_plantas_ganancia_por_venta$cat<-"Ganancia"
+                                                  
+#BASE DE GASTOS POR VENTA POR CLIENTE
+#Agregar los gastos que se realizaron cada vez que se vendio un producto al cliente por categorias
+base_ventas_gastos_plantas_gastos_por_cat<-aggregate(base_ventas_gastos_plantas_desglosado$Precio_proveedor,by=list(Nombre=base_ventas_gastos_plantas_desglosado$Nombre,Apellido=base_ventas_gastos_plantas_desglosado$Apellido,Fecha_compra=base_ventas_gastos_plantas_desglosado$Fecha_compra,cat=base_ventas_gastos_plantas_desglosado$cat),FUN=sum,na.rm=T)
+
+#Renombrar columna
+colnames(base_ventas_gastos_plantas_gastos_por_cat)[5]<-"total"
+
+#UNIR LA BASE DE GASTOS Y TOTAL DE VENTA POR CLIENTE
+base_ventas_gastos_plantas_gastos_por_cat<-rbind(base_ventas_gastos_plantas_ganancia_por_venta[,c("Nombre","Apellido","Fecha_compra","cat","total")],base_ventas_gastos_plantas_gastos_por_cat)
+
+
+#Aquí necesito calcular la proporción de cada categoría por la compra que se hizo por cliente, por lo que necesito aislar cada compra y calcular la proporción por separada. Hacer una lista siendo cada slot un data.frame de cada especie
+base_ventas_gastos_plantas_gastos_split<-split(base_ventas_gastos_plantas_gastos_por_cat,f=paste(base_ventas_gastos_plantas_gastos_por_cat$Nombre,base_ventas_gastos_plantas_gastos_por_cat$Apellido,base_ventas_gastos_plantas_gastos_por_cat$Fecha_compra))
+
+#Calcular la proporción por cada venta que se hace
+funcion.x<-function(input){
+  ouput<-input %>% 
+    mutate(proporcion=round(prop.table(total)*100,2))
+}
+
+#Aplicar la función a cada venta
+base_ventas_gastos_plantas_gastos_split<-lapply(base_ventas_gastos_plantas_gastos_split,funcion.x)
+
+library("plyr")
+
+#Convertir nuevamente en un data frame
+base_ventas_gastos_plantas_gastos_split<-ldply(base_ventas_gastos_plantas_gastos_split, rbind)
+
+
+
+base_ventas_gastos_plantas_gastos_split<-base_ventas_gastos_plantas_gastos_split[order(base_ventas_gastos_plantas_gastos_split$.id,base_ventas_gastos_plantas_gastos_split$cat),]
+
+head(base_ventas_gastos_plantas_gastos_split) #Para ver estructura de base
+summary(base_ventas_gastos_plantas_gastos_split$proporcion) #Ver valores altos y bajos
+subset(base_ventas_gastos_plantas_gastos_split,base_ventas_gastos_plantas_gastos_split$proporcion<0) #Seleccionar las partes que necesito observar
+
+#Seleccionar las ventas con proporciones positivas. Solamente hubo uno con una proporción negativa ya que se perdió porque se le mandó una planta de reposición. Rafael Urban Perez.
+base_ventas_gastos_plantas_gastos_split<-subset(base_ventas_gastos_plantas_gastos_split,base_ventas_gastos_plantas_gastos_split$proporcion>=0)
+
+summary(base_ventas_gastos_plantas_gastos_split$proporcion) #Ver valores altos y bajos
+
+#Resumen por categoria de proporcion
+tapply(base_ventas_gastos_plantas_gastos_split$proporcion,base_ventas_gastos_plantas_gastos_split$cat,summary)
+
+#Boxplot de la proporcion ganda por categoria
+boxplot(proporcion~cat,data=base_ventas_gastos_plantas_gastos_split,las=2)
+
+#Obtener una base de datos para analizar el total gastado por venta en cada categoria
+base_ventas_gastos_plantas_gastos_wide<-reshape(base_ventas_gastos_plantas_gastos_split[,c("Nombre","Apellido","Fecha_compra","total","cat")], idvar = c("Nombre","Apellido","Fecha_compra"), timevar = "cat", direction = "wide")
+
+#Grafica
+pairs(base_ventas_gastos_plantas_gastos_wide[,c("total.Ganancia","total.Comision","total.Fletes","total.Plantas","total.Salario","total.Gasolina")],lower.panel=panel.cor,diag.panel=panel.hist,panel=panel.smooth)
+
+#Los datos estan muy sesgados, voy a transformarlos
+base_ventas_gastos_plantas_gastos_wide<-base_ventas_gastos_plantas_gastos_wide %>% mutate(log.comision=log(total.Comision)) %>% 
+  mutate(log.fletes=log(total.Fletes)) %>% 
+  mutate(log.ganancia=log(total.Ganancia)) %>% 
+  mutate(log.gasolina=log(total.Gasolina)) %>% 
+  mutate(log.plantas=log(total.Plantas)) %>% 
+  mutate(log.salario=log(total.Salario))
+
+#Grafica
+pairs(base_ventas_gastos_plantas_gastos_wide[,c("log.ganancia","log.comision","log.fletes","log.plantas","log.salario","log.gasolina")],lower.panel=panel.cor,diag.panel=panel.hist,panel=panel.smooth)
+
+
+
+
+
+
+
+
+base_ventas_gastos_plantas_gastos_wide<-reshape(base_ventas_gastos_plantas_gastos_split[,c("Nombre","Apellido","Fecha_compra","proporcion","cat")], idvar = c("Nombre","Apellido","Fecha_compra"), timevar = "cat", direction = "wide")
+
+pairs(base_ventas_gastos_plantas_gastos_wide[,c("proporcion.Ganancia","proporcion.Comision","proporcion.Fletes","proporcion.Plantas","proporcion.Salario","proporcion.Gasolina")],lower.panel=panel.cor,diag.panel=panel.hist,panel=panel.smooth)
+
+base_ventas_gastos_plantas_gastos_wide<-base_ventas_gastos_plantas_gastos_wide %>% 
+  mutate(sqrt.ganancia=sqrt(asin(proporcion.Ganancia/100))) %>% 
+  mutate(sqrt.comision=sqrt(asin(proporcion.Comision/100))) %>% 
+  mutate(sqrt.fletes=sqrt(asin(proporcion.Fletes/100))) %>% 
+  mutate(sqrt.plantas=sqrt(asin(proporcion.Plantas/100))) %>% 
+  mutate(sqrt.salario=sqrt(asin(proporcion.Salario/100))) %>% 
+  mutate(sqrt.gasolina=sqrt(asin(proporcion.Gasolina/100))) %>% 
+  mutate(variacion.comision=ifelse(as.numeric(substr(Fecha_compra,6,7))<7,"pre.10.comision","post.10.comision"))
+
+pairs(base_ventas_gastos_plantas_gastos_wide[,c("sqrt.ganancia","sqrt.comision","sqrt.fletes","sqrt.plantas","sqrt.salario","sqrt.gasolina")],lower.panel=panel.cor,diag.panel=panel.hist,panel=panel.smooth)
+
+base_ventas_gastos_plantas_gastos_wide<-subset(base_ventas_gastos_plantas_gastos_wide,base_ventas_gastos_plantas_gastos_wide$proporcion.Gasolina<40)
+
+#pairs(base_ventas_gastos_plantas_gastos_wide[,c("sqrt.ganancia","sqrt.comision","sqrt.fletes","sqrt.plantas","sqrt.salario","sqrt.gasolina")],lower.panel=panel.cor,diag.panel=panel.hist,panel=panel.smooth)
+
+pairs(base_ventas_gastos_plantas_gastos_wide[,c("sqrt.ganancia","sqrt.comision","sqrt.fletes","sqrt.plantas","sqrt.salario","sqrt.gasolina")],diag.panel=panel.hist,panel=panel.smooth)
+
+
+mod.1<-lm(sqrt.ganancia~sqrt.plantas+sqrt.salario+sqrt.gasolina+sqrt.fletes+sqrt.comision+variacion.comision,data=base_ventas_gastos_plantas_gastos_wide)
+
+library("car")
+vif(mod.1)
+summary(mod.1)
+
+#Quitmaos los fletes porque estan relacionados con las plantas (VIF y pair plot) y me interesa más retener la proporción de gasto en plantas. Le intenté poner un término cuadrático al salario porque parecía tener una curvatura pero tuvo un  VIF y además el término cuadrático no fue significativo
+mod.2<-lm(sqrt.ganancia~sqrt.salario+sqrt.gasolina+sqrt.plantas+sqrt.comision+variacion.comision,data=base_ventas_gastos_plantas_gastos_wide)
+
+vif(mod.2)
+summary(mod.2)
+
+#Quitamos la gasolina
+mod.3<-lm(sqrt.ganancia~sqrt.salario+sqrt.plantas+sqrt.comision+variacion.comision,data=base_ventas_gastos_plantas_gastos_wide)
+
+vif(mod.3)
+summary(mod.3)
+
+#Quitamos variacion.comision
+mod.4<-lm(sqrt.ganancia~sqrt.salario+sqrt.plantas+variacion.comision,data=base_ventas_gastos_plantas_gastos_wide)
+
+vif(mod.4)
+summary(mod.4)
+
+#Quitamos la comisión
+mod.5<-lm(sqrt.ganancia~sqrt.salario+sqrt.plantas,data=base_ventas_gastos_plantas_gastos_wide)
+
+vif(mod.5)
+summary(mod.5)
+
+#AIC del modelo
+library("MuMIn")
+Weights(AIC(mod.1,mod.2,mod.3,mod.4,mod.5))
+
+#Checar supuestos del modelo
+plot(mod.5)
+
+#La observacion 540 hace que los datos no sean normales. La voy a quitar y correr nuevamente el analisis
+base_ventas_gastos_plantas_gastos_wide<-subset(base_ventas_gastos_plantas_gastos_wide,row.names(base_ventas_gastos_plantas_gastos_wide)!="550") #Corrí otra vez los 4 modelos anteriores sin el outlier y dí con la misma selección de variables
+
+#Correr modelo
+mod.5<-lm(sqrt.ganancia~sqrt.salario+sqrt.plantas,data=base_ventas_gastos_plantas_gastos_wide)
+
+vif(mod.5)
+summary(mod.5)
+
+#Checar supuestos del modelo
+plot(mod.5)
+
+#Graficar datos que fueron significativos
+pairs(base_ventas_gastos_plantas_gastos_wide[,c("sqrt.ganancia","sqrt.plantas","sqrt.salario")],diag.panel=panel.hist,panel=panel.smooth) 
+#INTERPRETACION: lo que más me está quitando ganancia es el salario y gastar en comprar la planta, en órden de importancia, por lo que podría hacer:
+#*Salario
+####***Reducir el salario: no quiero hacerlo porque siento que se el dinero que le doy a mamá es poco. Pero entonces no podría incrementarlo como lo había pensado
+
+#*Planta: tratar de tener más ganancia al:
+####***Comprar la planta más barata: ya lo hice al comprar con la Viznaga vagabunda
+####***Subir el costo de las plantas: lo voy a hacer para algunas especies
+
+
+#Aquí quiero ver cuál es la relación entre el total de la venta y la prorporción del salario y plantas, entonces debo de unir la base de proporciones con una base que tenga el total de la venta por compra por cliente
+base_ventas_gastos_plantas_gastos_split<-merge(base_ventas_gastos_plantas_gastos_split,aggregate(base_ventas_gastos_plantas_gastos_por_cat$total,by=list(Nombre=base_ventas_gastos_plantas_gastos_por_cat$Nombre,Apellido=base_ventas_gastos_plantas_gastos_por_cat$Apellido,Fecha_compra=base_ventas_gastos_plantas_gastos_por_cat$Fecha_compra),FUN=sum),by=c("Nombre","Apellido","Fecha_compra"),all=F)
+
+#Renombrar columnas
+colnames(base_ventas_gastos_plantas_gastos_split)[ncol(base_ventas_gastos_plantas_gastos_split)]<-"total_venta"
+
+#PONER UNA COLUMNA QUE INDIQUE EL MES COMO NUMERIC
+#Etiquetar valores por color. Pongo Julio como punto de corte porque fue cuando empecé a poner un valor del 10% del total de la venta coo salario
+base_ventas_gastos_plantas_gastos_split$color[as.numeric(substr(base_ventas_gastos_plantas_gastos_split$Fecha_compra,6,7))>=7]="red"
+base_ventas_gastos_plantas_gastos_split$color[as.numeric(substr(base_ventas_gastos_plantas_gastos_split$Fecha_compra,6,7))<7]="black"
+
+#Hacer subset para ver relación entre la variable que quiero analizar y el total
+prueba<-subset(base_ventas_gastos_plantas_gastos_split,base_ventas_gastos_plantas_gastos_split$cat=="Salario")
+
+#Hacer gráfica
+plot(prueba$total,prueba$total_venta,col=prueba$color)
+
+
+#CHECAR PORQUE ALGUNAS PLANTAS GANO TAN POCA GANANCIA
+subset(base_ventas_gastos_plantas_gastos_split,base_ventas_gastos_plantas_gastos_split$proporcion<=20 & base_ventas_gastos_plantas_gastos_split$cat=="Ganancia")
+
+
+mostrar<-function(Nombre,Apellido,mes,dia)
+
+subset(base_ventas_gastos_plantas_desglosado,base_ventas_gastos_plantas_desglosado$Nombre=="Adan Martin" & base_ventas_gastos_plantas_desglosado$Apellido=="Perez Negrete" & base_ventas_gastos_plantas_desglosado$Fecha_compra=="2018-11-22") #Seleccionar datos a ver en la base donde veo los que se gasto junto cocn lo que se vendio
+
+subset(ventas,ventas$Nombre=="Altair" & ventas$Apellido=="Tuvia" & ventas$Fecha_compra=="2018-02-03") #Ver la informacion en la base original de ventas
+
+#Omar Marin Ahuatzi   2018-07-25 el flete que no se le cobro porque lo pago mercado libre
+
+#Checar Rafael Urban Perez   2018-09-18 La planta ($150) llegó aplastada y tuve que enviarle otra sin costo, por eso el precio proveedor es de $300
+
+#boxplot(proporcion~cat,data=base_ventas_gastos_plantas_gastos_split)
+
+#NECESITO DESARMAR LA LISTA PARA DESPUES HACER UN BOXPLOT Y SABER POR CADA VENTA CUAL ES LA PROPORCION QUE SE LLEVA CADA CATEGORIA  
+  
+```
+
+##¿En qué se gasta el dinero cada vez que se realiza una venta?
+En lo que más se gasta es en **comprar la planta**. Lo que no sé es qué podría hacer para aumentar la ganancia. Hay varias opciones:
+
+* Reproducir las plantas: ahorita no es factible porque no estoy en México
+* Conseguir proveedores que me vendan la planta más barata: ya conseguí uno y compré varias plantas baratas. Ahora no sé si reducir el precio de venta o si dejarlo fijo y ganar más.
+* Subir el precio de las plantas: algunas plantas podría subirle el precio, otras siento que estarían un poco caras si las subo
+
+```{r,echo=F,fig.width=16, fig.height=10,align="center",include=F}
+#Boxplot de la proporcion ganda por categoria
+par(mar=c(14,5,2,2),cex.main=2.2,cex.lab=1.8,cex.axis=1.8)
+boxplot(proporcion~cat,data=base_ventas_gastos_plantas_gastos_split,las=2,main="Desglose de gastos y ganancia por venta",xlab="",ylab="Porcentaje (%)")
+mtext("Categoría",side=1,line=10,cex=1.8)
+```
