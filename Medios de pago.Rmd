@@ -1,0 +1,53 @@
+---
+title: "Formas de pago"
+author: "Luis Antonio Arias Medellín"
+date: "7/12/2019"
+output: html_document
+---
+
+```{r,include=F}
+#Abrir paquetes
+rm(list = ls())
+library("rmarkdown")
+library("dplyr")
+library("ggplot2")
+
+#Importar funciones
+source("Funciones/Limpieza bases.R")
+
+#Ejectuar función para limpiar la base de datos
+limpiar.base.ventas()
+```
+
+#Formas de pago por compra
+```{r,echo=F,fig.align='center'}
+
+ventas.formas.pago<-ventas %>% 
+  distinct(Nombre,Apellido,Fecha_compra,Medio_pago)
+
+data.frame(table(ventas.formas.pago$Medio_pago))%>% 
+  transmute(Forma.pago=Var1,
+            counts=as.numeric(Freq)) %>% 
+  mutate(prop=round(prop.table(counts),4)) %>% 
+  arrange(desc(prop)) %>%
+  ggplot(aes(x = "", y = prop, fill = Forma.pago)) +
+  geom_bar(width = 1, stat = "identity", color = "grey") +
+  coord_polar("y", start = 0)+
+  geom_text(aes(label = paste(counts," (",prop*100,"%",")",sep="")), color = "black",fontface="bold",position = position_stack(vjust = 0.5)) +
+   theme_void() +
+  labs(fill="Forma.pago")
+```
+
+#Total de ventas por formas de pago
+
+```{r,echo=F,fig.align='center'}
+ventas %>% 
+  group_by(Nombre,Apellido,Fecha_compra,Medio_pago) %>% 
+  summarise(Total=sum(Total)) %>% 
+  ungroup() %>% 
+  filter(Medio_pago!="NA") %>% 
+  ggplot(aes(x=Medio_pago,y=Total)) + 
+  geom_col() +
+  theme(axis.text.x=element_text(angle=45,hjust=1))
+```
+
