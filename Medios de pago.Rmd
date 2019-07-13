@@ -51,3 +51,34 @@ ventas %>%
   theme(axis.text.x=element_text(angle=45,hjust=1))
 ```
 
+#Total de venta por medio de pago por cada transacción
+
+```{r,echo=F,fig.align="center"}
+ventas %>% 
+  group_by(Nombre,Apellido,Fecha_compra,Medio_pago) %>% 
+  summarise(Total=sum(Total)) %>% 
+  ungroup() %>% 
+  filter(Medio_pago!="NA") %>% 
+  ggplot(aes(x=Medio_pago,y=Total)) + 
+  geom_boxplot()
+```
+
+#Ventas mensuales por medio de pago
+
+```{r,echo=F,fig.align="center"}
+orden.meses<-c("Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec")
+
+ventas %>% 
+  mutate(Mes=format(Fecha_compra,"%b"),
+         ano=format(Fecha_compra,"%Y")) %>% 
+  mutate(Mes=factor(Mes,levels=c("Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"))) %>% 
+  group_by(ano,Mes,Medio_pago) %>% 
+  summarise(Total=sum(Total)) %>% 
+  ungroup() %>% 
+  filter(Medio_pago!="NA") %>% 
+  ggplot(aes(x=Mes,y=Total)) + 
+  geom_boxplot() +
+  facet_wrap(~Medio_pago) +
+  theme(axis.text.x=element_text(angle=45,hjust=1))
+  
+```
