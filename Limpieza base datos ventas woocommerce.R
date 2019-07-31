@@ -6,13 +6,15 @@ rm(list = ls())
 
 #Cargar librerías
 library("tibble")
-
+library("tidyverse")
+library("tidyr")
 
 ##############################
 #CÓDIGO PARA DAR FORMATO A LAS VENTAS
 
 #Cargar archivo
-woo.ventas<-read.csv("Base de datos/ventas a procesar woocommerce.csv")
+woo.ventas<-read.csv("Base de datos/ventas a procesar woocommerce.csv",
+                     stringsAsFactors = FALSE)
 
 #Renombrar columnas
 colnames(woo.ventas)<-c("num_pedido","estatus_pedido","Nombre","Apellido","Fecha_compra",
@@ -29,14 +31,16 @@ woo.ventas$Apellido<-chartr("áéíóúñ", "aeioun", woo.ventas$Apellido)
 
 #Dar formato a la fecha de compra
 #Dar formato a la fecha
-woo.ventas$Fecha_compra<-as.Date(woo.ventas$Fecha_compra,format="%Y-%m-%d")
+woo.ventas <- woo.ventas %>% 
+  separate(Fecha_compra, into = c("Fecha", "Hora"), sep = " ", remove = FALSE) %>% 
+  mutate(Fecha_compra=as.Date(Fecha, format = "%m/%d/%y")) %>% 
+  select(-c("Fecha","Hora"))
 
 #Agregar la familia a la cual pertenece la planta
 woo.ventas<-add_column(woo.ventas,Familia="Cactaceae",.after="Cantidad")
 
 #Dividir el nombre del producto en tres columnas, que serían género, especie y variedad
 #Dividir en varias columnas para tener toda la informacion
-library("tidyr")
 woo.ventas<-woo.ventas %>% separate(Nombre_producto,c("Genero","Especie","Variedad",
                                                       "Tamano_maceta","Extra"))
 
@@ -67,7 +71,11 @@ woo.ventas$Ciudad_envio<-chartr("áéíóúñ", "aeioun", woo.ventas$Ciudad_envi
 woo.ventas$Estado_envio<-chartr("áéíóúñ", "aeioun", woo.ventas$Estado_envio)
 
 #Dar formato a fecha de envío
-woo.ventas$Fecha_envio<-as.Date(woo.ventas$Fecha_envio,format="%Y-%m-%d")
+woo.ventas <- woo.ventas %>% 
+  separate(Fecha_envio, into = c("Fecha", "Hora"), sep = " ", remove = FALSE) %>% 
+  mutate(Fecha_envio=as.Date(Fecha, format = "%m/%d/%y")) %>% 
+  select(-c("Fecha","Hora"))
+#woo.ventas$Fecha_envio<-as.Date(woo.ventas$Fecha_envio,format="%Y-%m-%d")
 
 #Agregar columnas de Promocion, sexo y comentarios
 #woo.ventas<-add_column(woo.ventas,Fecha_recibido=Sys.Date(),.after="Fecha_envio")
@@ -154,99 +162,39 @@ write.csv(woo.ventas[,c("Nombre","Apellido","Fecha_compra","Cantidad","Familia",
                         "Medio_contacto","Medio_pago","Ciudad_envio","Estado_envio","Fecha_envio",
                         "Fecha_recibido","Promocion","Sexo","Comentarios","Punto_venta")], 
           file = "Base de datos/Base ventas.csv",row.names=F)
-
-
-##############################
+######
 #CÓDIGO PARA DAR OBTENER UNA BASE DE DATOS CON LOS PRECIOS QUE LOS PROVEEDORES ME DAN
 #library("xlsx")
-#Abrir archivo. Esta hoja contiene informacion de las compras que realicé a los proovedores
-#compra_plantas<-read.xlsx("Gastos ventas.xlsx",sheetIndex=1)
-
 library("gdata")
-compra_plantas<-read.xls("Base de datos/Gastos ventas.xlsx",sheet=1,header=T)
+compra_plantas<-read.xls("Base de datos/Compra a proveedores2.xlsx",sheet=1,header=T) %>% 
+  select(Fecha_compra_prov,
+         Genero,
+         Especie,
+         Variedad,
+         Tamano_maceta_orig,
+         Tamano_maceta_final,
+         Precio_unitario)%>% 
+  mutate(Fecha_compra_prov=as.character(Fecha_compra_prov)) %>% 
+  mutate(Fecha_compra_prov=as.Date(Fecha_compra_prov)) %>%
+  mutate(Tamano_maceta_orig=if_else(is.na(Tamano_maceta_final)==TRUE,Tamano_maceta_orig,
+                                    Tamano_maceta_final)) %>% 
+  rename(Tamano_maceta=Tamano_maceta_orig,
+         Fecha_compra=Fecha_compra_prov) %>% 
+  select(-Tamano_maceta_final) 
 
-#Seleccionar las columnas de interes
-compra_plantas<-compra_plantas[,c("Proveedor","Nombre","Apellido","Fecha","Cantidad","Genero",
-                               "Especie","Variedad","Tamano_maceta","Precio_unitario","Total",
-                               "Fecha_compra")]
+compra_plantas$Variedad[compra_plantas$Variedad==""]  <- NA 
 
-#Llenar celdas vacias con NA's
-compra_plantas[compra_plantas==""]<-NA 
 
-#Dar formato a la fecha
-compra_plantas$Fecha_compra<-as.Date(compra_plantas$Fecha_compra,
-                                     origin = "1900-01-05")
-#compra_plantas$Fecha_compra<-as.Date(as.numeric(compra_plantas$Fecha_compra),
-                                     #origin = "1899-12-30")
-
-#Seleccionar un proveedor en específico (solamente si lo necesitas en especial)
-#compra_plantas<-subset(compra_plantas,compra_plantas$Proveedor=="Tono")
-
-#Hacer una base con el último precio que me dieron mis provedores
-#Obtener las columnas que necesito
-compra_plantas<-compra_plantas[,c("Fecha_compra","Genero","Especie","Variedad","Tamano_maceta",
-                                  "Precio_unitario")]
-
-#Seleccionar líneas que tengan solamente información sobre las plantas
-compra_plantas<-subset(compra_plantas,compra_plantas$Genero!="Comision")
-#compra_plantas<-subset(compra_plantas,compra_plantas$Genero!="Flete")
-compra_plantas<-subset(compra_plantas,compra_plantas$Genero!="Gasolina")
-compra_plantas<-subset(compra_plantas,compra_plantas$Genero!="Salario")
-compra_plantas<-subset(compra_plantas,compra_plantas$Genero!="Propina")
-
-#Crear un dataframe que tenga como dimensión el número de especies que he comprado
-base.precios.proovedores<-unique(compra_plantas[,c("Genero","Especie","Variedad",
-                                                   "Tamano_maceta")])
-#Agregar la fecha de compra y precio unitario
-base.precios.proovedores<-add_column(base.precios.proovedores,Fecha_compra=Sys.Date(),
-                                     .before="Genero")
-base.precios.proovedores<-add_column(base.precios.proovedores,Precio_unitario=0,
-                                     .after="Tamano_maceta")
-
-#Tengo que separa la base por especie para tener pequeñas bases y sacar la fila con la ultima
-#fecha de compra
-#Hacer una lista siendo cada slot un data.frame de cada especie
-base.dividida<-split(compra_plantas,f=paste(compra_plantas$Genero,compra_plantas$Especie,
-                                            compra_plantas$Variedad,
-                                            compra_plantas$Tamano_maceta))
-
-#Obtener el último precio al que se me dio la planta
-for (i in 1:length(base.dividida)){
-  ultima.compra<-subset(base.dividida[[i]],
-         base.dividida[[i]][,"Fecha_compra"]==max(base.dividida[[i]][,"Fecha_compra"]))
-#Aqui no entiendo porque para Ariocarpus kotshcoubeyanus elephantidens no pega el precio
-  base.precios.proovedores$Precio_unitario<-ifelse(paste(base.precios.proovedores$Genero,
-                                                         base.precios.proovedores$Especie,
-                                                         base.precios.proovedores$Variedad,
-                                                         base.precios.proovedores$Tamano_maceta)==
-                                                     paste(ultima.compra$Genero,
-                                                           ultima.compra$Especie,
-                                                           ultima.compra$Variedad,
-                                                           ultima.compra$Tamano_maceta),
-                                                   as.numeric(as.character(ultima.compra$Precio_unitario)),
-                                                   base.precios.proovedores$Precio_unitario)
+base.precios.proovedores <- compra_plantas %>% 
+  group_by(Genero,Especie,Variedad,Tamano_maceta) %>% 
+  summarise(Fecha_compra=min(Fecha_compra))
   
-  base.precios.proovedores$Fecha_compra<-ifelse(paste(base.precios.proovedores$Genero,
-                                                         base.precios.proovedores$Especie,
-                                                         base.precios.proovedores$Variedad,
-                                                         base.precios.proovedores$Tamano_maceta)==
-                                                     paste(ultima.compra$Genero,
-                                                           ultima.compra$Especie,
-                                                           ultima.compra$Variedad,
-                                                           ultima.compra$Tamano_maceta),
-                                                ultima.compra$Fecha_compra,
-                                                base.precios.proovedores$Fecha_compra)
-  
-  }
-
-#Ordenar la base de datos
-base.precios.proovedores<-base.precios.proovedores[order(base.precios.proovedores$Genero,
-                                                         base.precios.proovedores$Especie,
-                                                         base.precios.proovedores$Variedad,
-                                                         base.precios.proovedores$Tamano_maceta),]
+base.precios.proovedores <- base.precios.proovedores %>% 
+  inner_join(compra_plantas,by=c("Fecha_compra","Genero","Especie","Variedad",
+                                 "Tamano_maceta"))
 
 #write.csv(base.precios.proovedores,"Base precios cactus Tono.csv",row.names = FALSE)
-subset(base.precios.proovedores,is.na(base.precios.proovedores$Precio_unitario)=="TRUE")[,2:5]
+
 ##############################
 #CÓDIGO PARA DAR FORMATO A LAS COMPRAS QUE YO REALICE
 #Copiar columnas que voy a utilizar para hacer la base de datos de cuando yo compro
@@ -272,6 +220,10 @@ compras.verdi<-merge(compras.verdi,
                      base.precios.proovedores[,c("Genero","Especie","Variedad",
                                                  "Tamano_maceta","Precio_unitario")],
                      by=c("Genero","Especie","Variedad","Tamano_maceta"),all=T)
+
+
+
+
 
 #Obtener las filas que tienen información de la compra que se realizó
 compras.verdi<-subset(compras.verdi,is.na(compras.verdi$Nombre)=="FALSE")
@@ -316,7 +268,7 @@ for (i in 1:length(base.dividida)){
 
 #Agregar la información de la comisión cobrada por paypal
 for (i in 1:length(base.dividida)){
-  if(base.dividida.ventas[[i]][1,"Medio_pago"]=="PayPal"){
+  if(base.dividida[[i]][1,"Medio_pago"]=="PayPal"){
   #Hacer una copia de una línea y pegarla en la última línea de cada pedido
   base.dividida[[i]]<-rbind(base.dividida[[i]],base.dividida[[i]][1,])
   
@@ -333,7 +285,7 @@ for (i in 1:length(base.dividida)){
 
 #Agregar la información de la comisión cobrada por mercado libre
 for (i in 1:length(base.dividida)){
-  if(base.dividida.ventas[[i]][1,"Medio_pago"]=="other"){
+  if(base.dividida[[i]][1,"Medio_pago"]=="other"){
     #Hacer una copia de una línea y pegarla en la última línea de cada pedido
     base.dividida[[i]]<-rbind(base.dividida[[i]],base.dividida[[i]][1,])
     
